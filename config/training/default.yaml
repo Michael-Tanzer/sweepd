@@ -1,0 +1,4 @@
+lr: 3e-5
+batch_size: 32
+epochs: 10
+seed: 42

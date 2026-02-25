@@ -1,0 +1,3 @@
+# Default command for new sweeps when not specified via CLI/UI.
+# Override in ~/.sweeps/sweep_config.toml for your environment.
+command = ["python", "example_script.py"]

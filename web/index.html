@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sweep Manager</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #1a1a1a;
+      --muted: #6b7280;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --green: #10b981;
+      --red: #ef4444;
+      --border: #e5e7eb;
+      --hover: #f9fafb;
+      --selected: #eff6ff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-size: 14px;
+      background: var(--bg);
+      color: var(--fg);
+      padding: 20px;
+      line-height: 1.5;
+    }
+    h1 { font-size: 24px; font-weight: 600; margin-bottom: 20px; color: var(--fg); }
+    h2 { font-size: 18px; font-weight: 600; margin-bottom: 12px; color: var(--fg); }
+    section {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    label {
+      display: inline-block;
+      font-weight: 500;
+      color: var(--fg);
+      margin-right: 8px;
+      min-width: 80px;
+    }
+    input, select, button, textarea {
+      font-family: inherit;
+      font-size: 14px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: white;
+      color: var(--fg);
+      transition: all 0.2s;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    button {
+      cursor: pointer;
+      font-weight: 500;
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+      padding: 8px 16px;
+    }
+    button:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+    button.secondary {
+      background: white;
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    button.secondary:hover {
+      background: var(--hover);
+    }
+    button.danger {
+      background: var(--red);
+      border-color: var(--red);
+    }
+    button.danger:hover {
+      background: #dc2626;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      text-align: left;
+    }
+    th {
+      background: var(--hover);
+      font-weight: 600;
+      color: var(--fg);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    tbody tr {
+      transition: background 0.15s;
+    }
+    tbody tr:hover {
+      background: var(--hover);
+    }
+    tbody tr.selected {
+      background: var(--selected);
+    }
+    tbody tr.ran {
+      opacity: 0.7;
+    }
+    .status-ran {
+      color: var(--green);
+      font-weight: 500;
+    }
+    .status-pending {
+      color: var(--red);
+      font-weight: 500;
+    }
+    .flex {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+    .grid-form .row {
+      margin-bottom: 12px;
+    }
+    .grid-form label {
+      min-width: 200px;
+    }
+    .grid-form input[type="text"] {
+      flex: 1;
+      min-width: 200px;
+    }
+    .grid-form textarea {
+      width: 100%;
+      min-height: 80px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+    }
+    #sweep-list {
+      min-width: 200px;
+    }
+    .msg {
+      margin: 12px 0;
+      padding: 12px;
+      border-radius: 6px;
+      font-weight: 500;
+    }
+    .msg.ok {
+      background: #d1fae5;
+      color: #065f46;
+      border: 1px solid var(--green);
+    }
+    .msg.err {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid var(--red);
+    }
+    #filter {
+      min-width: 120px;
+    }
+    #filter-text {
+      flex: 1;
+      min-width: 200px;
+    }
+    .hash {
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <h1>Sweep Manager</h1>
+
+  <section>
+    <div class="flex">
+      <label>Sweep</label>
+      <select id="sweep-list">
+        <option value="">-- Select or create --</option>
+      </select>
+      <button type="button" id="btn-refresh" class="secondary">Refresh</button>
+      <button type="button" id="btn-delete-sweep" class="danger" style="display:none;">Delete sweep</button>
+    </div>
+  </section>
+
+  <section id="section-quick-create">
+    <h2>Quick create / Add to existing</h2>
+    <div class="grid-form">
+      <div class="row flex">
+        <label>Base (optional)</label>
+        <input type="text" id="qc-base" placeholder="gpu=0" />
+      </div>
+      <div class="row flex">
+        <label>Grid (one per line: key=val1,val2,...)</label>
+        <textarea id="qc-grid" placeholder="training.lr=0.01,0.001&#10;training.batch_size=8,16"></textarea>
+      </div>
+      <div class="row flex">
+        <button type="button" id="qc-generate" class="secondary">Generate runs</button>
+        <span id="qc-count" style="color: var(--muted);"></span>
+      </div>
+      <div class="row flex">
+        <label>Save as</label>
+        <input type="text" id="qc-sweep-id" placeholder="new_sweep_id" />
+        <button type="button" id="qc-save-new">Save as new sweep</button>
+        <label>Or add to</label>
+        <select id="qc-add-to"></select>
+        <button type="button" id="qc-add-existing" class="secondary">Add to existing sweep</button>
+      </div>
+      <div id="qc-msg" class="msg" style="display:none;"></div>
+    </div>
+  </section>
+
+  <section id="section-sweep" style="display:none;">
+    <h2>Sweep: <span id="current-sweep-id"></span></h2>
+    <div class="flex">
+      <label>Filter</label>
+      <select id="filter">
+        <option value="">All</option>
+        <option value="ran">Ran</option>
+        <option value="pending">Pending</option>
+      </select>
+      <input type="text" id="filter-text" placeholder="Search..." />
+      <button type="button" id="btn-add-runs" class="secondary">Add runs</button>
+      <button type="button" id="btn-remove-selected" class="danger">Remove selected</button>
+      <button type="button" id="btn-mark-rerun" class="secondary">Mark selected for rerun</button>
+      <button type="button" id="btn-mark-ran" class="secondary">Mark selected as ran</button>
+    </div>
+    <div id="table-wrap"></div>
+    <div id="sweep-msg" class="msg" style="display:none;"></div>
+  </section>
+
+  <script>
+    const API = '';
+    let currentSweepId = null;
+    let currentRows = [];
+    let currentColumns = [];
+    let generatedRows = [];
+    const msgTimestamps = {};
+    const msgTimeouts = {};
+
+    function showMsg(elId, text, isErr) {
+      const el = document.getElementById(elId);
+      el.textContent = text;
+      el.className = 'msg ' + (isErr ? 'err' : 'ok');
+      el.style.display = 'block';
+      const now = Date.now();
+      msgTimestamps[elId] = now;
+      if (msgTimeouts[elId]) {
+        clearTimeout(msgTimeouts[elId]);
+      }
+      msgTimeouts[elId] = setTimeout(() => hideMsg(elId), 5000);
+    }
+
+    function hideMsg(elId) {
+      const el = document.getElementById(elId);
+      if (!el) return;
+      const shownAt = msgTimestamps[elId];
+      if (shownAt) {
+        const elapsed = Date.now() - shownAt;
+        const minDisplayTime = 1000;
+        if (elapsed < minDisplayTime) {
+          const remaining = minDisplayTime - elapsed;
+          if (msgTimeouts[elId]) {
+            clearTimeout(msgTimeouts[elId]);
+          }
+          msgTimeouts[elId] = setTimeout(() => {
+            el.style.display = 'none';
+            delete msgTimestamps[elId];
+            delete msgTimeouts[elId];
+          }, remaining);
+          return;
+        }
+      }
+      el.style.display = 'none';
+      delete msgTimestamps[elId];
+      if (msgTimeouts[elId]) {
+        clearTimeout(msgTimeouts[elId]);
+        delete msgTimeouts[elId];
+      }
+    }
+
+    async function fetchJson(url, opts = {}) {
+      const r = await fetch(API + url, {
+        headers: { 'Content-Type': 'application/json', ...opts.headers },
+        ...opts
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(t || r.statusText);
+      }
+      return r.json();
+    }
+
+    async function loadSweepList() {
+      const data = await fetchJson('/api/sweeps');
+      const sel = document.getElementById('sweep-list');
+      const addTo = document.getElementById('qc-add-to');
+      const prev = sel.value;
+      sel.innerHTML = '<option value="">-- Select or create --</option>' +
+        (data.sweep_ids || []).map(id => `<option value="${id}">${id}</option>`).join('');
+      addTo.innerHTML = '<option value="">-- select --</option>' +
+        (data.sweep_ids || []).map(id => `<option value="${id}">${id}</option>`).join('');
+      if (prev && data.sweep_ids.includes(prev)) sel.value = prev;
+    }
+
+    async function loadSweep(sweepId) {
+      try {
+        const data = await fetchJson('/api/sweeps/' + encodeURIComponent(sweepId));
+        currentSweepId = sweepId;
+        currentRows = data.rows || [];
+        currentColumns = data.columns || [];
+        document.getElementById('current-sweep-id').textContent = sweepId;
+        document.getElementById('section-sweep').style.display = 'block';
+        document.getElementById('btn-delete-sweep').style.display = 'inline-block';
+        renderTable();
+        hideMsg('sweep-msg');
+      } catch (err) {
+        showMsg('sweep-msg', err.message, true);
+      }
+    }
+
+    function filterRows() {
+      const statusFilter = document.getElementById('filter').value;
+      const textFilter = document.getElementById('filter-text').value.trim().toLowerCase();
+      return currentRows.filter(r => {
+        if (statusFilter && r.status !== statusFilter) return false;
+        if (textFilter) {
+          const line = (r.param_line || '').toLowerCase();
+          if (!line.includes(textFilter)) return false;
+        }
+        return true;
+      });
+    }
+
+    function renderTable() {
+      const filtered = filterRows();
+      const cols = ['index', 'hash', 'status', ...currentColumns];
+      const thead = '<tr><th style="width: 40px;"><input type="checkbox" id="select-all" /></th>' +
+        cols.map(c => `<th>${c === 'hash' ? 'Run ID' : c === 'index' ? '#' : c}</th>`).join('') + '</tr>';
+      const tbody = filtered.map(r => {
+        const cells = cols.map(c => {
+          let v = r[c];
+          if (c === 'hash') {
+            return `<td class="hash">${escapeHtml(String(v))}</td>`;
+          }
+          if (c === 'status') {
+            const cls = v === 'ran' ? 'status-ran' : 'status-pending';
+            return `<td class="${cls}">${escapeHtml(String(v))}</td>`;
+          }
+          return `<td>${v === undefined ? '' : escapeHtml(String(v))}</td>`;
+        }).join('');
+        return `<tr class="${r.status}" data-index="${r.index}" data-hash="${r.hash}"><td><input type="checkbox" class="row-cb" /></td>${cells}</tr>`;
+      }).join('');
+      document.getElementById('table-wrap').innerHTML = '<table><thead>' + thead + '</thead><tbody>' + tbody + '</tbody></table>';
+      
+      const selectAll = document.getElementById('select-all');
+      if (selectAll) {
+        selectAll.addEventListener('change', e => {
+          document.querySelectorAll('.row-cb').forEach(cb => cb.checked = e.target.checked);
+          updateSelectedRows();
+        });
+      }
+      
+      document.querySelectorAll('.row-cb').forEach(cb => {
+        cb.addEventListener('change', updateSelectedRows);
+      });
+    }
+
+    function updateSelectedRows() {
+      document.querySelectorAll('tbody tr').forEach(tr => {
+        const cb = tr.querySelector('.row-cb');
+        tr.classList.toggle('selected', cb && cb.checked);
+      });
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    document.getElementById('sweep-list').addEventListener('change', async e => {
+      const v = e.target.value;
+      if (!v) {
+        document.getElementById('section-sweep').style.display = 'none';
+        document.getElementById('btn-delete-sweep').style.display = 'none';
+        currentSweepId = null;
+        return;
+      }
+      await loadSweep(v);
+    });
+
+    document.getElementById('btn-refresh').addEventListener('click', async () => {
+      await loadSweepList();
+      if (currentSweepId) {
+        await loadSweep(currentSweepId);
+      }
+    });
+
+    document.getElementById('filter').addEventListener('change', renderTable);
+    document.getElementById('filter-text').addEventListener('input', renderTable);
+
+    document.getElementById('qc-generate').addEventListener('click', () => {
+      const base = document.getElementById('qc-base').value.trim();
+      const gridText = document.getElementById('qc-grid').value.trim();
+      const grid = gridText ? gridText.split(/\n/).map(s => s.trim()).filter(Boolean) : [];
+      if (!grid.length) {
+        showMsg('qc-msg', 'Enter at least one grid line (key=val1,val2,...).', true);
+        return;
+      }
+      const runs = [];
+      function product(axisIdx, soFar) {
+        if (axisIdx >= grid.length) {
+          runs.push((base ? base + ',' : '') + soFar.join(','));
+          return;
+        }
+        const line = grid[axisIdx];
+        const eq = line.indexOf('=');
+        if (eq === -1) return;
+        const key = line.slice(0, eq).trim();
+        const vals = line.slice(eq + 1).split(',').map(s => s.trim()).filter(Boolean);
+        vals.forEach(v => product(axisIdx + 1, soFar.concat([key + '=' + v])));
+      }
+      product(0, []);
+      generatedRows = runs;
+      document.getElementById('qc-count').textContent = generatedRows.length + ' runs generated';
+      hideMsg('qc-msg');
+    });
+
+    document.getElementById('qc-save-new').addEventListener('click', async () => {
+      const sweepId = document.getElementById('qc-sweep-id').value.trim();
+      if (!sweepId) { showMsg('qc-msg', 'Enter a sweep ID.', true); return; }
+      if (!generatedRows.length) { showMsg('qc-msg', 'Generate runs first.', true); return; }
+      try {
+        let cmd;
+        try {
+          cmd = (await fetchJson('/api/default-command')).command;
+        } catch {
+          cmd = ["python", "main.py"];
+        }
+        const res = await fetchJson('/api/sweeps', {
+          method: 'POST',
+          body: JSON.stringify({ sweep_id: sweepId, command: cmd, runs: generatedRows })
+        });
+        showMsg('qc-msg', 'Created: ' + res.added + ' added, ' + res.skipped + ' skipped.', false);
+        await loadSweepList();
+        document.getElementById('sweep-list').value = sweepId;
+        await loadSweep(sweepId);
+      } catch (err) {
+        showMsg('qc-msg', err.message, true);
+      }
+    });
+
+    document.getElementById('qc-add-existing').addEventListener('click', async () => {
+      const sweepId = document.getElementById('qc-add-to').value;
+      if (!sweepId) { showMsg('qc-msg', 'Select a sweep to add to.', true); return; }
+      if (!generatedRows.length) { showMsg('qc-msg', 'Generate runs first.', true); return; }
+      try {
+        const res = await fetchJson('/api/sweeps/' + encodeURIComponent(sweepId) + '/runs', {
+          method: 'POST',
+          body: JSON.stringify({ runs: generatedRows })
+        });
+        showMsg('qc-msg', 'Added: ' + res.added + ', skipped ' + res.skipped + ' duplicates.', false);
+        if (currentSweepId === sweepId) await loadSweep(sweepId);
+      } catch (err) {
+        showMsg('qc-msg', err.message, true);
+      }
+    });
+
+    document.getElementById('btn-add-runs').addEventListener('click', async () => {
+      const raw = prompt('Paste one param line per line (e.g. training.lr=0.01,training.bs=8)');
+      if (!raw) return;
+      const runs = raw.split(/\n/).map(s => s.trim()).filter(Boolean);
+      if (!runs.length) return;
+      try {
+        const res = await fetchJson('/api/sweeps/' + encodeURIComponent(currentSweepId) + '/runs', {
+          method: 'POST',
+          body: JSON.stringify({ runs })
+        });
+        showMsg('sweep-msg', 'Added ' + res.added + ', skipped ' + res.skipped + ' duplicates.', false);
+        await loadSweep(currentSweepId);
+      } catch (err) {
+        showMsg('sweep-msg', err.message, true);
+      }
+    });
+
+    document.getElementById('btn-remove-selected').addEventListener('click', async () => {
+      const indices = Array.from(document.querySelectorAll('tbody tr.selected')).map(tr => parseInt(tr.dataset.index, 10)).filter(n => !isNaN(n));
+      if (!indices.length) { showMsg('sweep-msg', 'Select rows to remove.', true); return; }
+      try {
+        await fetchJson('/api/sweeps/' + encodeURIComponent(currentSweepId) + '/runs/remove', {
+          method: 'POST',
+          body: JSON.stringify({ indices })
+        });
+        showMsg('sweep-msg', 'Removed ' + indices.length + ' run(s).', false);
+        await loadSweep(currentSweepId);
+      } catch (err) {
+        showMsg('sweep-msg', err.message, true);
+      }
+    });
+
+    document.getElementById('btn-mark-rerun').addEventListener('click', async () => {
+      const hashes = Array.from(document.querySelectorAll('tbody tr.selected')).map(tr => tr.dataset.hash).filter(Boolean);
+      if (!hashes.length) { showMsg('sweep-msg', 'Select rows to mark for rerun.', true); return; }
+      try {
+        await fetchJson('/api/sweeps/' + encodeURIComponent(currentSweepId) + '/runs/mark-rerun', {
+          method: 'POST',
+          body: JSON.stringify({ hashes })
+        });
+        showMsg('sweep-msg', 'Marked ' + hashes.length + ' run(s) for rerun.', false);
+        await loadSweep(currentSweepId);
+      } catch (err) {
+        showMsg('sweep-msg', err.message, true);
+      }
+    });
+
+    document.getElementById('btn-mark-ran').addEventListener('click', async () => {
+      const hashes = Array.from(document.querySelectorAll('tbody tr.selected')).map(tr => tr.dataset.hash).filter(Boolean);
+      if (!hashes.length) { showMsg('sweep-msg', 'Select rows to mark as ran.', true); return; }
+      try {
+        await fetchJson('/api/sweeps/' + encodeURIComponent(currentSweepId) + '/runs/mark-ran', {
+          method: 'POST',
+          body: JSON.stringify({ hashes })
+        });
+        showMsg('sweep-msg', 'Marked ' + hashes.length + ' run(s) as ran.', false);
+        await loadSweep(currentSweepId);
+      } catch (err) {
+        showMsg('sweep-msg', err.message, true);
+      }
+    });
+
+    document.getElementById('btn-delete-sweep').addEventListener('click', async () => {
+      if (!currentSweepId) return;
+      if (!confirm('Delete sweep "' + currentSweepId + '"? This cannot be undone.')) return;
+      try {
+        await fetchJson('/api/sweeps/' + encodeURIComponent(currentSweepId), {
+          method: 'DELETE'
+        });
+        showMsg('sweep-msg', 'Deleted sweep ' + currentSweepId + '.', false);
+        currentSweepId = null;
+        document.getElementById('sweep-list').value = '';
+        document.getElementById('btn-delete-sweep').style.display = 'none';
+        document.getElementById('table-wrap').innerHTML = '';
+        await loadSweepList();
+      } catch (err) {
+        showMsg('sweep-msg', err.message, true);
+      }
+    });
+
+    loadSweepList();
+  </script>
+</body>
+</html>
