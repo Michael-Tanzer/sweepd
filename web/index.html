@@ -14,6 +14,7 @@
       --accent-hover: #2563eb;
       --green: #10b981;
       --red: #ef4444;
+      --amber: #f59e0b;
       --border: #e5e7eb;
       --hover: #f9fafb;
       --selected: #eff6ff;
@@ -124,6 +125,10 @@
       color: var(--red);
       font-weight: 500;
     }
+    .status-review {
+      color: var(--amber);
+      font-weight: 500;
+    }
     .flex {
       display: flex;
       flex-wrap: wrap;
@@ -232,6 +237,12 @@
         <span id="qc-count" style="color: var(--muted);"></span>
       </div>
       <div class="row flex">
+        <label style="min-width:auto; font-weight:400; display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="qc-as-review" style="width:16px; height:16px;" />
+          Add as "in review"
+        </label>
+      </div>
+      <div class="row flex">
         <label>Save as</label>
         <input type="text" id="qc-sweep-id" placeholder="new_sweep_id" />
         <button type="button" id="qc-save-new">Save as new sweep</button>
@@ -253,12 +264,15 @@
       <select id="filter">
         <option value="">All</option>
         <option value="ran">Ran</option>
+        <option value="review">In review</option>
         <option value="pending">Pending</option>
       </select>
       <input type="text" id="filter-text" placeholder="Search..." />
       <button type="button" id="btn-add-runs" class="secondary">Add runs</button>
       <button type="button" id="btn-mark-rerun" class="secondary">Mark selected for rerun</button>
       <button type="button" id="btn-mark-ran" class="secondary">Mark selected as ran</button>
+      <button type="button" id="btn-mark-review" class="secondary">Mark selected as review</button>
+      <button type="button" id="btn-promote-review" class="secondary">Promote selected to pending</button>
       <button type="button" id="btn-remove-selected" class="danger" style="margin-left:auto;">Remove selected</button>
     </div>
     <div id="add-runs-panel">
@@ -266,6 +280,10 @@
       <div class="flex">
         <button type="button" id="btn-add-runs-submit">Add runs</button>
         <button type="button" id="btn-add-runs-cancel" class="secondary">Cancel</button>
+        <label style="min-width:auto; font-weight:400; display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="add-runs-as-review" style="width:16px; height:16px;" />
+          Add as "in review"
+        </label>
       </div>
     </div>
     <div id="table-wrap"></div>
@@ -357,8 +375,10 @@
         document.getElementById('btn-delete-sweep').style.display = 'inline-block';
         const total = data.total_count || 0;
         const completed = data.completed_count || 0;
+        const review = data.review_count || 0;
+        const pending = total - completed - review;
         document.getElementById('sweep-summary').textContent =
-          completed + ' / ' + total + ' completed (' + (total - completed) + ' pending)';
+          completed + ' ran / ' + review + ' in review / ' + pending + ' pending';
         renderTable();
         hideMsg('sweep-msg');
       } catch (err) {
@@ -391,7 +411,7 @@
             return `<td class="hash">${escapeHtml(String(v))}</td>`;
           }
           if (c === 'status') {
-            const cls = v === 'ran' ? 'status-ran' : 'status-pending';
+            const cls = v === 'ran' ? 'status-ran' : v === 'review' ? 'status-review' : 'status-pending';
             return `<td class="${cls}">${escapeHtml(String(v))}</td>`;
           }
           return `<td>${v === undefined ? '' : escapeHtml(String(v))}</td>`;
@@ -478,6 +498,7 @@
       const sweepId = document.getElementById('qc-sweep-id').value.trim();
       if (!sweepId) { showMsg('qc-msg', 'Enter a sweep ID.', true); return; }
       if (!generatedRows.length) { showMsg('qc-msg', 'Generate runs first.', true); return; }
+      const addAsReview = document.getElementById('qc-as-review').checked;
       try {
         let cmd;
         try {
@@ -487,7 +508,7 @@
         }
         const res = await fetchJson('/api/sweeps', {
           method: 'POST',
-          body: JSON.stringify({ sweep_id: sweepId, command: cmd, runs: generatedRows })
+          body: JSON.stringify({ sweep_id: sweepId, command: cmd, runs: generatedRows, add_as_review: addAsReview })
         });
         showMsg('qc-msg', 'Created: ' + res.added + ' added, ' + res.skipped + ' skipped.', false);
         await loadSweepList();
@@ -502,10 +523,11 @@
       const sweepId = document.getElementById('qc-add-to').value;
       if (!sweepId) { showMsg('qc-msg', 'Select a sweep to add to.', true); return; }
       if (!generatedRows.length) { showMsg('qc-msg', 'Generate runs first.', true); return; }
+      const addAsReview = document.getElementById('qc-as-review').checked;
       try {
         const res = await fetchJson('/api/sweeps/' + encodeURIComponent(sweepId) + '/runs', {
           method: 'POST',
-          body: JSON.stringify({ runs: generatedRows })
+          body: JSON.stringify({ runs: generatedRows, add_as_review: addAsReview })
         });
         showMsg('qc-msg', 'Added: ' + res.added + ', skipped ' + res.skipped + ' duplicates.', false);
         if (currentSweepId === sweepId) await loadSweep(sweepId);
@@ -530,14 +552,16 @@
       const raw = document.getElementById('add-runs-text').value;
       const runs = raw.split(/\n/).map(s => s.trim()).filter(Boolean);
       if (!runs.length) { showMsg('sweep-msg', 'Enter at least one run.', true); return; }
+      const addAsReview = document.getElementById('add-runs-as-review').checked;
       try {
         const res = await fetchJson('/api/sweeps/' + encodeURIComponent(currentSweepId) + '/runs', {
           method: 'POST',
-          body: JSON.stringify({ runs })
+          body: JSON.stringify({ runs, add_as_review: addAsReview })
         });
         showMsg('sweep-msg', 'Added ' + res.added + ', skipped ' + res.skipped + ' duplicates.', false);
         document.getElementById('add-runs-panel').style.display = 'none';
         document.getElementById('add-runs-text').value = '';
+        document.getElementById('add-runs-as-review').checked = false;
         await loadSweep(currentSweepId);
       } catch (err) {
         showMsg('sweep-msg', err.message, true);
@@ -583,6 +607,36 @@
           body: JSON.stringify({ hashes })
         });
         showMsg('sweep-msg', 'Marked ' + hashes.length + ' run(s) as ran.', false);
+        await loadSweep(currentSweepId);
+      } catch (err) {
+        showMsg('sweep-msg', err.message, true);
+      }
+    });
+
+    document.getElementById('btn-mark-review').addEventListener('click', async () => {
+      const hashes = Array.from(document.querySelectorAll('tbody tr.selected')).map(tr => tr.dataset.hash).filter(Boolean);
+      if (!hashes.length) { showMsg('sweep-msg', 'Select rows to mark as review.', true); return; }
+      try {
+        await fetchJson('/api/sweeps/' + encodeURIComponent(currentSweepId) + '/runs/mark-review', {
+          method: 'POST',
+          body: JSON.stringify({ hashes })
+        });
+        showMsg('sweep-msg', 'Marked ' + hashes.length + ' run(s) as in review.', false);
+        await loadSweep(currentSweepId);
+      } catch (err) {
+        showMsg('sweep-msg', err.message, true);
+      }
+    });
+
+    document.getElementById('btn-promote-review').addEventListener('click', async () => {
+      const hashes = Array.from(document.querySelectorAll('tbody tr.selected')).map(tr => tr.dataset.hash).filter(Boolean);
+      if (!hashes.length) { showMsg('sweep-msg', 'Select rows to promote to pending.', true); return; }
+      try {
+        await fetchJson('/api/sweeps/' + encodeURIComponent(currentSweepId) + '/runs/promote', {
+          method: 'POST',
+          body: JSON.stringify({ hashes })
+        });
+        showMsg('sweep-msg', 'Promoted ' + hashes.length + ' run(s) to pending.', false);
         await loadSweep(currentSweepId);
       } catch (err) {
         showMsg('sweep-msg', err.message, true);

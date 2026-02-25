@@ -18,6 +18,7 @@ from sweep import (
     run_hash,
     save_meta,
     save_runs,
+    sweep_daemon,
     sweep_run,
     _meta_path,
     _ran_path,
@@ -266,6 +267,21 @@ def cmd_export_runs(sweep_id):
         raise SystemExit(1)
     for line in param_lines:
         click.echo(line)
+
+
+@cli.command("daemon")
+@click.argument("sweep_id", required=False, default=None)
+@click.option("--interval", default=30, show_default=True, help="Poll interval in seconds when idle.")
+@click.option("--gpu", "gpu_id", default=0, show_default=True, help="GPU index to check VRAM usage on.")
+@click.option("--cpu", "cpu_mode", is_flag=True, default=False, help="Skip GPU check (CPU-only mode).")
+@click.option("--vram-threshold", default=1000, show_default=True, help="VRAM usage threshold in MB — above this the GPU is considered busy.")
+def cmd_daemon(sweep_id, interval, gpu_id, cpu_mode, vram_threshold):
+    """Run pending work and keep polling for new runs.
+
+    If SWEEP_ID is given, watches only that sweep. Otherwise watches all sweeps.
+    """
+    sweep_ids = [sweep_id] if sweep_id else []
+    sweep_daemon(sweep_ids, interval=interval, gpu_id=gpu_id, cpu_mode=cpu_mode, vram_threshold_mb=vram_threshold)
 
 
 @cli.command("migrate")

@@ -9,6 +9,7 @@ import hashlib
 import os
 import sys
 import subprocess
+import time
 import tomllib
 
 try:
@@ -51,6 +52,13 @@ def get_ran_dir():
     Returns ~/.sweeps/ran directory path.
     """
     return os.path.join(get_sweep_dir(), "ran")
+
+
+def get_review_dir():
+    """
+    Returns ~/.sweepd/review directory path (for runs staged as 'in review').
+    """
+    return os.path.join(get_sweep_dir(), "review")
 
 
 def param_line_to_dict(param_line):
@@ -108,6 +116,11 @@ def _runs_path(sweep_id):
 def _ran_path(sweep_id):
     """Path to ran/<sweep_id>.txt."""
     return os.path.join(get_ran_dir(), f"{sweep_id}.txt")
+
+
+def _review_path(sweep_id):
+    """Path to review/<sweep_id>.txt."""
+    return os.path.join(get_review_dir(), f"{sweep_id}.txt")
 
 
 def _legacy_sweep_path(sweep_id):
@@ -199,6 +212,29 @@ def get_completed_hashes(sweep_id):
     return set()
 
 
+def get_review_hashes(sweep_id):
+    """
+    Returns set of run hashes currently staged as 'in review' for the sweep.
+
+    Reads review/<sweep_id>.txt (lines: hash\\tparam_line).
+    """
+    review_path = _review_path(sweep_id)
+    if not os.path.exists(review_path):
+        return set()
+    with open(review_path, "r") as f:
+        out = set()
+        for line in f:
+            line = line.rstrip("\n\r")
+            if not line:
+                continue
+            if RAN_SEP in line:
+                h, _ = line.split(RAN_SEP, 1)
+                out.add(h.strip()[:RUN_HASH_LEN])
+            else:
+                out.add(run_hash(line))
+        return out
+
+
 def lock_file(file_handle):
     """
     Lock file handle for exclusive access (cross-platform).
@@ -229,11 +265,13 @@ def unlock_file(file_handle):
 def claim_next_run(sweep_id):
     """
     Atomically finds next unran run (by hash), appends hash\\tparam_line to ran file, returns param_line or None.
+    Skips runs that are currently 'in review'.
     """
     os.makedirs(get_ran_dir(), exist_ok=True)
     os.makedirs(get_configs_dir(), exist_ok=True)
 
     command, param_lines = get_sweep_config(sweep_id)
+    review_hashes = get_review_hashes(sweep_id)
     ran_path = _ran_path(sweep_id)
     mode = "a+b" if HAS_MSVCRT else "a+"
     with open(ran_path, mode) as f:
@@ -265,7 +303,7 @@ def claim_next_run(sweep_id):
 
             for param_line in param_lines:
                 h = run_hash(param_line)
-                if h not in completed:
+                if h not in completed and h not in review_hashes:
                     line_to_append = f"{h}{RAN_SEP}{param_line}\n"
                     f.seek(0, 2)
                     if HAS_MSVCRT:
@@ -448,6 +486,83 @@ def add_ran_lines_by_hashes(sweep_id, hashes_to_add):
             unlock_file(f)
 
 
+def add_review_lines_by_hashes(sweep_id, hashes_to_review):
+    """
+    Moves runs to the review file for the given hashes.
+    These runs will be invisible to claim_next_run until promoted.
+    Only adds hashes not already in the review file. Uses file locking.
+    """
+    if not hashes_to_review:
+        return
+    try:
+        _, param_lines = get_sweep_config(sweep_id)
+    except FileNotFoundError:
+        return
+    hash_to_param = {run_hash(p): p for p in param_lines}
+    os.makedirs(get_review_dir(), exist_ok=True)
+    review_path = _review_path(sweep_id)
+    existing_review = get_review_hashes(sweep_id)
+    to_add = []
+    for h in hashes_to_review:
+        h = h.strip()[:RUN_HASH_LEN]
+        if h in existing_review:
+            continue
+        if h in hash_to_param:
+            to_add.append(f"{h}{RAN_SEP}{hash_to_param[h]}\n")
+    if not to_add:
+        return
+    mode = "a+b" if HAS_MSVCRT else "a+"
+    with open(review_path, mode) as f:
+        lock_file(f)
+        try:
+            f.seek(0, 2)
+            for line in to_add:
+                if HAS_MSVCRT:
+                    f.write(line.encode("utf-8"))
+                else:
+                    f.write(line)
+            f.flush()
+        finally:
+            unlock_file(f)
+
+
+def promote_from_review(sweep_id, hashes_to_promote):
+    """
+    Promotes runs from 'in review' to 'pending' by removing them from the review file.
+    After this, claim_next_run will pick them up.
+    """
+    review_path = _review_path(sweep_id)
+    if not os.path.exists(review_path):
+        return
+    hashes_to_remove = {h.strip()[:RUN_HASH_LEN] for h in hashes_to_promote}
+    with open(review_path, "r") as f:
+        lines = f.readlines()
+    kept = []
+    for line in lines:
+        stripped = line.rstrip("\n\r")
+        if not stripped:
+            continue
+        if RAN_SEP in stripped:
+            h = stripped.split(RAN_SEP, 1)[0].strip()[:RUN_HASH_LEN]
+        else:
+            h = run_hash(stripped)
+        if h not in hashes_to_remove:
+            kept.append(stripped)
+    with open(review_path, "w") as f:
+        for line in kept:
+            f.write(line + "\n")
+
+
+def append_runs_as_review(sweep_id, param_lines):
+    """
+    Appends param_lines to runs.txt AND immediately stages them in the review file.
+    These runs will not be claimed until promoted via promote_from_review().
+    """
+    append_runs(sweep_id, param_lines)
+    hashes = [run_hash(p) for p in param_lines]
+    add_review_lines_by_hashes(sweep_id, hashes)
+
+
 def list_sweep_ids():
     """
     Returns list of sweep IDs from configs/*.meta.toml and legacy ~/.sweeps/*.txt (excluding _ran.txt).
@@ -501,10 +616,100 @@ def migrate_sweep(sweep_id):
     return True
 
 
+def is_gpu_free(gpu_id=0, vram_threshold_mb=1000):
+    """
+    Check whether a GPU has less than vram_threshold_mb MB of VRAM in use.
+
+    Returns True if the GPU appears free, False if busy, None if nvidia-smi is unavailable
+    or the check cannot be performed (non-GPU machine or driver not installed).
+    """
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits", f"-i={gpu_id}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        used_mb = int(result.stdout.strip())
+        return used_mb < vram_threshold_mb
+    except (FileNotFoundError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+def sweep_daemon(sweep_ids, interval=30, gpu_id=0, cpu_mode=False, vram_threshold_mb=1000):
+    """
+    Daemon loop: run all pending work across given sweeps (or all sweeps if empty),
+    then poll every `interval` seconds for new work.
+
+    gpu_id: which GPU index to check VRAM usage on. Ignored if cpu_mode=True.
+    cpu_mode: if True, skip GPU check entirely.
+    vram_threshold_mb: VRAM usage below this (MB) means GPU is considered free.
+    """
+    specific_ids = list(sweep_ids) if sweep_ids else None
+
+    if not cpu_mode:
+        gpu_status = is_gpu_free(gpu_id, vram_threshold_mb)
+        if gpu_status is None:
+            print("nvidia-smi not available or GPU not detected; running without GPU check.")
+            cpu_mode = True
+        else:
+            print(f"GPU {gpu_id} check enabled (threshold: {vram_threshold_mb} MB VRAM).")
+
+    print(f"Daemon started. Poll interval: {interval}s.")
+    if specific_ids:
+        print(f"Watching sweep(s): {', '.join(specific_ids)}")
+    else:
+        print("Watching all sweeps.")
+    sys.stdout.flush()
+
+    while True:
+        ids = specific_ids if specific_ids is not None else list_sweep_ids()
+        found_work = False
+
+        for sweep_id in ids:
+            try:
+                command, _ = get_sweep_config(sweep_id)
+            except FileNotFoundError:
+                continue
+
+            while True:
+                if not cpu_mode:
+                    free = is_gpu_free(gpu_id, vram_threshold_mb)
+                    if free is False:
+                        print(f"GPU {gpu_id} busy (>= {vram_threshold_mb} MB VRAM used). Waiting {interval}s...")
+                        sys.stdout.flush()
+                        time.sleep(interval)
+                        continue
+                    # free is None means check failed; proceed anyway
+
+                param_line = claim_next_run(sweep_id)
+                if param_line is None:
+                    break  # no more pending work in this sweep
+
+                found_work = True
+                h = run_hash(param_line)
+                print(f"\n[daemon] Sweep '{sweep_id}' [{h}] {param_line}")
+                sys.stdout.flush()
+
+                exit_code = execute_run(command, param_line)
+                if exit_code == 0:
+                    print("[daemon] Run completed successfully.")
+                else:
+                    print(f"[daemon] Run failed with exit code {exit_code}.")
+                sys.stdout.flush()
+
+        if not found_work:
+            print(f"No pending work. Sleeping {interval}s...")
+            sys.stdout.flush()
+            time.sleep(interval)
+
+
 def main():
     """CLI entry point. With subcommand (list, show, run, ...) delegates to sweep_cli; else legacy: run <sweep_id>."""
     import sys
-    subcommands = {"list", "show", "run", "create", "add-runs", "mark-rerun", "delete", "export-runs", "migrate"}
+    subcommands = {"list", "show", "run", "create", "add-runs", "mark-rerun", "delete", "export-runs", "migrate", "daemon"}
     if len(sys.argv) > 1 and sys.argv[1] in subcommands:
         from sweep_cli import main as cli_main
         cli_main()

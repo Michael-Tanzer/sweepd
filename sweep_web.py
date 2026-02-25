@@ -13,19 +13,24 @@ from pydantic import BaseModel
 
 from sweep import (
     add_ran_lines_by_hashes,
+    add_review_lines_by_hashes,
+    append_runs,
+    append_runs_as_review,
     get_completed_hashes,
     get_default_command,
+    get_review_hashes,
     get_runs,
     get_sweep_config,
     list_sweep_ids,
     param_line_to_dict,
+    promote_from_review,
     remove_ran_lines_by_hashes,
     run_hash,
     save_meta,
     save_runs,
-    append_runs,
     _meta_path,
     _ran_path,
+    _review_path,
     _runs_path,
 )
 from sweep_cli import _expand_grid as expand_grid, _dedup_against_existing as dedup_against_existing
@@ -43,15 +48,22 @@ class CreateSweepBody(BaseModel):
     runs: list[str] | None = None
     base: str = ""
     grid: list[str] | None = None
+    add_as_review: bool = False
 
 
 class AddRunsBody(BaseModel):
     runs: list[str] | None = None
     base: str = ""
     grid: list[str] | None = None
+    add_as_review: bool = False
 
 
 class MarkRerunBody(BaseModel):
+    hashes: list[str] | None = None
+    indices: list[int] | None = None
+
+
+class MarkReviewBody(BaseModel):
     hashes: list[str] | None = None
     indices: list[int] | None = None
 
@@ -60,18 +72,29 @@ class RemoveRunsBody(BaseModel):
     indices: list[int]
 
 
-def _runs_to_table_rows(param_lines, completed_hashes):
-    """Returns list of dicts: { index, hash, status, ...key: value } and set of all keys."""
+def _runs_to_table_rows(param_lines, completed_hashes, review_hashes=None):
+    """Returns list of dicts: { index, hash, status, ...key: value } and set of all keys.
+
+    status is one of: 'ran', 'review', 'pending'.
+    """
+    if review_hashes is None:
+        review_hashes = set()
     all_keys = set()
     rows = []
     for i, line in enumerate(param_lines):
         h = run_hash(line)
         d = param_line_to_dict(line)
         all_keys.update(d.keys())
+        if h in completed_hashes:
+            status = "ran"
+        elif h in review_hashes:
+            status = "review"
+        else:
+            status = "pending"
         rows.append({
             "index": i,
             "hash": h,
-            "status": "ran" if h in completed_hashes else "pending",
+            "status": status,
             "param_line": line,
             **d,
         })
@@ -101,7 +124,8 @@ def api_get_sweep(sweep_id: str):
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Sweep not found: {sweep_id}")
     completed = get_completed_hashes(sweep_id)
-    rows, columns = _runs_to_table_rows(param_lines, completed)
+    review = get_review_hashes(sweep_id)
+    rows, columns = _runs_to_table_rows(param_lines, completed, review)
     return {
         "sweep_id": sweep_id,
         "command": command,
@@ -109,6 +133,7 @@ def api_get_sweep(sweep_id: str):
         "rows": rows,
         "columns": columns,
         "completed_count": len(completed),
+        "review_count": len(review),
         "total_count": len(param_lines),
     }
 
@@ -136,6 +161,8 @@ def api_create_sweep(body: CreateSweepBody):
     to_add, skipped = dedup_against_existing(existing, new_lines)
     save_meta(body.sweep_id, cmd)
     save_runs(body.sweep_id, existing + to_add)
+    if body.add_as_review and to_add:
+        add_review_lines_by_hashes(body.sweep_id, [run_hash(p) for p in to_add])
     return {"added": len(to_add), "skipped": skipped}
 
 
@@ -156,7 +183,10 @@ def api_add_runs(sweep_id: str, body: AddRunsBody):
     to_add, skipped = dedup_against_existing(existing, new_lines)
     if not to_add:
         return {"added": 0, "skipped": skipped}
-    append_runs(sweep_id, to_add)
+    if body.add_as_review:
+        append_runs_as_review(sweep_id, to_add)
+    else:
+        append_runs(sweep_id, to_add)
     return {"added": len(to_add), "skipped": skipped}
 
 
@@ -196,11 +226,47 @@ def api_mark_ran(sweep_id: str, body: MarkRerunBody):
     return {"marked": len(to_add)}
 
 
+@app.post("/api/sweeps/{sweep_id}/runs/mark-review")
+def api_mark_review(sweep_id: str, body: MarkReviewBody):
+    """Stage run(s) as 'in review' so they are not claimed by runners."""
+    to_review = set(body.hashes or [])
+    if body.indices:
+        try:
+            _, param_lines = get_sweep_config(sweep_id)
+        except FileNotFoundError:
+            param_lines = []
+        for i in body.indices:
+            if 0 <= i < len(param_lines):
+                to_review.add(run_hash(param_lines[i]))
+    if not to_review:
+        raise HTTPException(status_code=400, detail="Provide hashes or indices.")
+    add_review_lines_by_hashes(sweep_id, to_review)
+    return {"marked": len(to_review)}
+
+
+@app.post("/api/sweeps/{sweep_id}/runs/promote")
+def api_promote_from_review(sweep_id: str, body: MarkReviewBody):
+    """Promote run(s) from 'in review' to 'pending' so runners can claim them."""
+    to_promote = set(body.hashes or [])
+    if body.indices:
+        try:
+            _, param_lines = get_sweep_config(sweep_id)
+        except FileNotFoundError:
+            param_lines = []
+        for i in body.indices:
+            if 0 <= i < len(param_lines):
+                to_promote.add(run_hash(param_lines[i]))
+    if not to_promote:
+        raise HTTPException(status_code=400, detail="Provide hashes or indices.")
+    promote_from_review(sweep_id, to_promote)
+    return {"promoted": len(to_promote)}
+
+
 @app.delete("/api/sweeps/{sweep_id}")
 def api_delete_sweep(sweep_id: str):
-    """Delete sweep config and ran file."""
+    """Delete sweep config, ran file, and review file."""
     removed = []
-    for path in [_meta_path(sweep_id), _runs_path(sweep_id), _ran_path(sweep_id)]:
+    for path in [_meta_path(sweep_id), _runs_path(sweep_id), _ran_path(sweep_id), _review_path(sweep_id)]:
         if os.path.exists(path):
             os.remove(path)
             removed.append(path)
