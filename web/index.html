@@ -182,6 +182,20 @@
       cursor: pointer;
       accent-color: var(--accent);
     }
+    #table-wrap {
+      overflow-x: auto;
+    }
+    #add-runs-panel {
+      margin-top: 12px;
+      display: none;
+    }
+    #add-runs-panel textarea {
+      width: 100%;
+      min-height: 80px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
   </style>
 </head>
 <body>
@@ -207,7 +221,10 @@
       </div>
       <div class="row flex">
         <label>Grid (one per line: key=val1,val2,...)</label>
-        <textarea id="qc-grid" placeholder="training.lr=0.01,0.001&#10;training.batch_size=8,16"></textarea>
+        <div style="flex:1; min-width:200px;">
+          <textarea id="qc-grid" style="width:100%;" placeholder="training.lr=0.01,0.001&#10;training.batch_size=8,16"></textarea>
+          <small style="color: var(--muted); font-size: 12px;">Each line: key=val1,val2,... — runs are the cartesian product</small>
+        </div>
       </div>
       <div class="row flex">
         <button type="button" id="qc-generate" class="secondary">Generate runs</button>
@@ -226,7 +243,10 @@
   </section>
 
   <section id="section-sweep" style="display:none;">
-    <h2>Sweep: <span id="current-sweep-id"></span></h2>
+    <div style="display:flex; align-items:baseline; gap:12px; margin-bottom:12px;">
+      <h2 style="margin-bottom:0;">Sweep: <span id="current-sweep-id"></span></h2>
+      <span id="sweep-summary" style="color: var(--muted); font-size: 13px;"></span>
+    </div>
     <div class="flex">
       <label>Filter</label>
       <select id="filter">
@@ -236,9 +256,16 @@
       </select>
       <input type="text" id="filter-text" placeholder="Search..." />
       <button type="button" id="btn-add-runs" class="secondary">Add runs</button>
-      <button type="button" id="btn-remove-selected" class="danger">Remove selected</button>
       <button type="button" id="btn-mark-rerun" class="secondary">Mark selected for rerun</button>
       <button type="button" id="btn-mark-ran" class="secondary">Mark selected as ran</button>
+      <button type="button" id="btn-remove-selected" class="danger" style="margin-left:auto;">Remove selected</button>
+    </div>
+    <div id="add-runs-panel">
+      <textarea id="add-runs-text" placeholder="One param line per line, e.g. training.lr=0.01,training.bs=8"></textarea>
+      <div class="flex">
+        <button type="button" id="btn-add-runs-submit">Add runs</button>
+        <button type="button" id="btn-add-runs-cancel" class="secondary">Cancel</button>
+      </div>
     </div>
     <div id="table-wrap"></div>
     <div id="sweep-msg" class="msg" style="display:none;"></div>
@@ -327,6 +354,10 @@
         document.getElementById('current-sweep-id').textContent = sweepId;
         document.getElementById('section-sweep').style.display = 'block';
         document.getElementById('btn-delete-sweep').style.display = 'inline-block';
+        const total = data.total_count || 0;
+        const completed = data.completed_count || 0;
+        document.getElementById('sweep-summary').textContent =
+          completed + ' / ' + total + ' completed (' + (total - completed) + ' pending)';
         renderTable();
         hideMsg('sweep-msg');
       } catch (err) {
@@ -482,17 +513,30 @@
       }
     });
 
-    document.getElementById('btn-add-runs').addEventListener('click', async () => {
-      const raw = prompt('Paste one param line per line (e.g. training.lr=0.01,training.bs=8)');
-      if (!raw) return;
+    document.getElementById('btn-add-runs').addEventListener('click', () => {
+      const panel = document.getElementById('add-runs-panel');
+      const isVisible = panel.style.display !== 'none';
+      panel.style.display = isVisible ? 'none' : 'block';
+      if (!isVisible) document.getElementById('add-runs-text').focus();
+    });
+
+    document.getElementById('btn-add-runs-cancel').addEventListener('click', () => {
+      document.getElementById('add-runs-panel').style.display = 'none';
+      document.getElementById('add-runs-text').value = '';
+    });
+
+    document.getElementById('btn-add-runs-submit').addEventListener('click', async () => {
+      const raw = document.getElementById('add-runs-text').value;
       const runs = raw.split(/\n/).map(s => s.trim()).filter(Boolean);
-      if (!runs.length) return;
+      if (!runs.length) { showMsg('sweep-msg', 'Enter at least one run.', true); return; }
       try {
         const res = await fetchJson('/api/sweeps/' + encodeURIComponent(currentSweepId) + '/runs', {
           method: 'POST',
           body: JSON.stringify({ runs })
         });
         showMsg('sweep-msg', 'Added ' + res.added + ', skipped ' + res.skipped + ' duplicates.', false);
+        document.getElementById('add-runs-panel').style.display = 'none';
+        document.getElementById('add-runs-text').value = '';
         await loadSweep(currentSweepId);
       } catch (err) {
         showMsg('sweep-msg', err.message, true);
