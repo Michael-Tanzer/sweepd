@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-sweep = "sweep_cli:main"
+sweep = "sweep.cli:main"
 
 [dependency-groups]
 dev = [

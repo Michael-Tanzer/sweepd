@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Click CLI for the sweep manager: list, show, run, create, add-runs, mark-rerun, delete, export-runs, migrate.
+Click CLI for the sweep manager: list, show, run, create, add-runs, mark-rerun, mark-ran, delete, export-runs, daemon, web.
 """
 import os
 import click
@@ -13,7 +13,6 @@ from sweep import (
     get_runs,
     get_sweep_config,
     list_sweep_ids,
-    migrate_sweep,
     remove_ran_lines_by_hashes,
     run_hash,
     save_meta,
@@ -284,21 +283,15 @@ def cmd_daemon(sweep_id, interval, gpu_id, cpu_mode, vram_threshold):
     sweep_daemon(sweep_ids, interval=interval, gpu_id=gpu_id, cpu_mode=cpu_mode, vram_threshold_mb=vram_threshold)
 
 
-@cli.command("migrate")
-@click.argument("sweep_id")
-def cmd_migrate(sweep_id):
-    """Migrate legacy ~/.sweeps/<id>.txt to new layout (meta.toml + runs.txt + ran)."""
-    try:
-        if migrate_sweep(sweep_id):
-            click.echo(f"Migrated sweep {sweep_id}.")
-        else:
-            click.echo("Sweep already in new layout.")
-    except FileNotFoundError as e:
-        click.echo(str(e), err=True)
-        raise SystemExit(1)
-    except RuntimeError as e:
-        click.echo(str(e), err=True)
-        raise SystemExit(1)
+@cli.command("web")
+@click.option("--host", default="0.0.0.0", show_default=True, help="Host to bind to.")
+@click.option("--port", default=8765, show_default=True, help="Port to listen on.")
+def cmd_web(host, port):
+    """Start the web UI server."""
+    import uvicorn
+    from sweep.web_app import app
+    click.echo(f"Starting Sweep Manager web UI at http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port)
 
 
 def main():

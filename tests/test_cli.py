@@ -1,43 +1,50 @@
 #!/usr/bin/env python3
 """
-Tests for sweep CLI (Click): list, show, create, add-runs, mark-rerun, delete, export-runs, migrate.
+Tests for sweep CLI (Click): list, show, create, add-runs, mark-rerun, mark-ran, delete, export-runs.
 Uses temporary directory for sweep data and Click's CliRunner.
 """
 import os
 import pytest
 from click.testing import CliRunner
 
-from sweep_cli import cli
+from sweep.cli import cli
 
 
 @pytest.fixture
 def sweep_dir(tmp_path):
     """Patch sweep module to use tmp_path for all sweep data."""
     import sweep as mod
+    import sweep.core as core
     base = str(tmp_path)
-    orig = {
-        "get_sweep_dir": mod.get_sweep_dir,
-        "get_configs_dir": mod.get_configs_dir,
-        "get_ran_dir": mod.get_ran_dir,
-        "_meta_path": mod._meta_path,
-        "_runs_path": mod._runs_path,
-        "_ran_path": mod._ran_path,
-        "_legacy_sweep_path": mod._legacy_sweep_path,
-        "_legacy_ran_path": mod._legacy_ran_path,
+    attrs = [
+        "get_sweep_dir", "get_configs_dir", "get_ran_dir", "get_review_dir",
+        "_meta_path", "_runs_path", "_ran_path", "_review_path",
+        "_legacy_sweep_path", "_legacy_ran_path",
+    ]
+    orig_mod = {k: getattr(mod, k) for k in attrs}
+    orig_core = {k: getattr(core, k) for k in attrs}
+    patches = {
+        "get_sweep_dir": lambda: base,
+        "get_configs_dir": lambda: os.path.join(base, "configs"),
+        "get_ran_dir": lambda: os.path.join(base, "ran"),
+        "get_review_dir": lambda: os.path.join(base, "review"),
+        "_meta_path": lambda sid: os.path.join(base, "configs", f"{sid}.meta.toml"),
+        "_runs_path": lambda sid: os.path.join(base, "configs", f"{sid}.runs.txt"),
+        "_ran_path": lambda sid: os.path.join(base, "ran", f"{sid}.txt"),
+        "_review_path": lambda sid: os.path.join(base, "review", f"{sid}.txt"),
+        "_legacy_sweep_path": lambda sid: os.path.join(base, f"{sid}.txt"),
+        "_legacy_ran_path": lambda sid: os.path.join(base, f"{sid}_ran.txt"),
     }
-    mod.get_sweep_dir = lambda: base
-    mod.get_configs_dir = lambda: os.path.join(base, "configs")
-    mod.get_ran_dir = lambda: os.path.join(base, "ran")
-    mod._meta_path = lambda sid: os.path.join(base, "configs", f"{sid}.meta.toml")
-    mod._runs_path = lambda sid: os.path.join(base, "configs", f"{sid}.runs.txt")
-    mod._ran_path = lambda sid: os.path.join(base, "ran", f"{sid}.txt")
-    mod._legacy_sweep_path = lambda sid: os.path.join(base, f"{sid}.txt")
-    mod._legacy_ran_path = lambda sid: os.path.join(base, f"{sid}_ran.txt")
+    for k, v in patches.items():
+        setattr(mod, k, v)
+        setattr(core, k, v)
     try:
         yield tmp_path
     finally:
-        for k, v in orig.items():
+        for k, v in orig_mod.items():
             setattr(mod, k, v)
+        for k, v in orig_core.items():
+            setattr(core, k, v)
 
 
 @pytest.fixture
@@ -253,27 +260,3 @@ def test_cli_export_runs_not_found(sweep_dir):
     runner = CliRunner()
     result = runner.invoke(cli, ["export-runs", "nope"])
     assert result.exit_code == 1
-
-
-def test_cli_migrate(sweep_dir, monkeypatch):
-    """sweep migrate converts legacy files to new layout."""
-    (sweep_dir / "old.txt").write_text("python o.py\nr=1\nr=2\n")
-    (sweep_dir / "old_ran.txt").write_text("r=1\n")
-    runner = CliRunner()
-    result = runner.invoke(cli, ["migrate", "old"])
-    assert result.exit_code == 0
-    assert "Migrated" in result.output
-    import sweep as mod
-    command, lines = mod.get_sweep_config("old")
-    assert command == ["python", "o.py"]
-    assert lines == ["r=1", "r=2"]
-
-
-def test_cli_migrate_already_new_layout(sweep_dir, default_command, monkeypatch):
-    """sweep migrate when already new layout prints message and exits 0."""
-    monkeypatch.chdir(sweep_dir)
-    runner = CliRunner()
-    runner.invoke(cli, ["create", "existing", "-r", "x=1"])
-    result = runner.invoke(cli, ["migrate", "existing"])
-    assert result.exit_code == 0
-    assert "already" in result.output.lower()

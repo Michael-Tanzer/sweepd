@@ -12,30 +12,37 @@ import pytest
 def sweep_dir(tmp_path):
     """Override path helpers to use tmp_path for the duration of the test."""
     import sweep as mod
+    import sweep.core as core
     base = str(tmp_path)
-    orig = {
-        "get_sweep_dir": mod.get_sweep_dir,
-        "get_configs_dir": mod.get_configs_dir,
-        "get_ran_dir": mod.get_ran_dir,
-        "_meta_path": mod._meta_path,
-        "_runs_path": mod._runs_path,
-        "_ran_path": mod._ran_path,
-        "_legacy_sweep_path": mod._legacy_sweep_path,
-        "_legacy_ran_path": mod._legacy_ran_path,
+    attrs = [
+        "get_sweep_dir", "get_configs_dir", "get_ran_dir", "get_review_dir",
+        "_meta_path", "_runs_path", "_ran_path", "_review_path",
+        "_legacy_sweep_path", "_legacy_ran_path",
+    ]
+    orig_mod = {k: getattr(mod, k) for k in attrs}
+    orig_core = {k: getattr(core, k) for k in attrs}
+    patches = {
+        "get_sweep_dir": lambda: base,
+        "get_configs_dir": lambda: os.path.join(base, "configs"),
+        "get_ran_dir": lambda: os.path.join(base, "ran"),
+        "get_review_dir": lambda: os.path.join(base, "review"),
+        "_meta_path": lambda sid: os.path.join(base, "configs", f"{sid}.meta.toml"),
+        "_runs_path": lambda sid: os.path.join(base, "configs", f"{sid}.runs.txt"),
+        "_ran_path": lambda sid: os.path.join(base, "ran", f"{sid}.txt"),
+        "_review_path": lambda sid: os.path.join(base, "review", f"{sid}.txt"),
+        "_legacy_sweep_path": lambda sid: os.path.join(base, f"{sid}.txt"),
+        "_legacy_ran_path": lambda sid: os.path.join(base, f"{sid}_ran.txt"),
     }
-    mod.get_sweep_dir = lambda: base
-    mod.get_configs_dir = lambda: os.path.join(base, "configs")
-    mod.get_ran_dir = lambda: os.path.join(base, "ran")
-    mod._meta_path = lambda sid: os.path.join(base, "configs", f"{sid}.meta.toml")
-    mod._runs_path = lambda sid: os.path.join(base, "configs", f"{sid}.runs.txt")
-    mod._ran_path = lambda sid: os.path.join(base, "ran", f"{sid}.txt")
-    mod._legacy_sweep_path = lambda sid: os.path.join(base, f"{sid}.txt")
-    mod._legacy_ran_path = lambda sid: os.path.join(base, f"{sid}_ran.txt")
+    for k, v in patches.items():
+        setattr(mod, k, v)
+        setattr(core, k, v)
     try:
         yield tmp_path
     finally:
-        for k, v in orig.items():
+        for k, v in orig_mod.items():
             setattr(mod, k, v)
+        for k, v in orig_core.items():
+            setattr(core, k, v)
 
 
 def test_run_hash_order_independent():
@@ -76,7 +83,7 @@ def test_meta_runs_roundtrip(sweep_dir):
 
 def test_grid_expansion():
     """Grid expansion produces cartesian product."""
-    from sweep_cli import _expand_grid
+    from sweep.cli import _expand_grid
     lines = _expand_grid("gpu=0", ["training.lr=0.01,0.001", "training.bs=8,16"])
     assert len(lines) == 4
     assert "gpu=0" in lines[0]
@@ -88,7 +95,7 @@ def test_grid_expansion():
 
 def test_dedup_against_existing():
     """Dedup skips runs that already exist (by hash)."""
-    from sweep_cli import _dedup_against_existing
+    from sweep.cli import _dedup_against_existing
     existing = ["a=1,b=2"]
     new = ["a=1,b=2", "a=2,b=3", "b=3,a=2"]
     to_add, skipped = _dedup_against_existing(existing, new)
@@ -233,41 +240,6 @@ def test_get_runs_not_found_returns_empty(sweep_dir):
     assert mod.get_runs("missing") == []
 
 
-def test_migrate_sweep_success(sweep_dir):
-    """migrate_sweep creates meta.toml, runs.txt, and ran from legacy files."""
-    import sweep as mod
-    (sweep_dir / "old.txt").write_text("uv run python main.py\np=1\np=2\n")
-    (sweep_dir / "old_ran.txt").write_text("p=1\n")
-    result = mod.migrate_sweep("old")
-    assert result is True
-    assert (sweep_dir / "configs" / "old.meta.toml").exists()
-    assert (sweep_dir / "configs" / "old.runs.txt").read_text().strip().split("\n") == ["p=1", "p=2"]
-    ran_content = (sweep_dir / "ran" / "old.txt").read_text().strip().split("\n")
-    assert len(ran_content) == 1
-    assert ran_content[0].startswith(mod.run_hash("p=1"))
-    assert "\t" in ran_content[0] and "p=1" in ran_content[0]
-
-
-def test_migrate_sweep_idempotent(sweep_dir):
-    """migrate_sweep returns False and does not overwrite when new layout already exists."""
-    import sweep as mod
-    os.makedirs(sweep_dir / "configs", exist_ok=True)
-    mod.save_meta("already", ["python", "a.py"])
-    mod.save_runs("already", ["x=1"])
-    (sweep_dir / "already.txt").write_text("python b.py\nx=2\n")
-    result = mod.migrate_sweep("already")
-    assert result is False
-    command, param_lines = mod.get_sweep_config("already")
-    assert param_lines == ["x=1"]
-
-
-def test_migrate_sweep_no_legacy_raises(sweep_dir):
-    """migrate_sweep raises FileNotFoundError when legacy file does not exist."""
-    import sweep as mod
-    with pytest.raises(FileNotFoundError, match="Legacy sweep file not found"):
-        mod.migrate_sweep("nope")
-
-
 def test_get_default_command_from_cwd_config(sweep_dir, monkeypatch):
     """get_default_command returns command from config/sweep_defaults.toml when cwd has it."""
     import sweep as mod
@@ -340,7 +312,7 @@ def test_execute_run_builds_correct_command(monkeypatch):
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         return type("R", (), {"returncode": 0})()
-    monkeypatch.setattr("sweep.subprocess.run", fake_run)
+    monkeypatch.setattr("sweep.core.subprocess.run", fake_run)
     execute_run(["python", "train.py"], "lr=0.01,batch_size=8")
     assert len(calls) == 1
     assert calls[0] == ["python", "train.py", "lr=0.01", "batch_size=8"]
@@ -349,12 +321,13 @@ def test_execute_run_builds_correct_command(monkeypatch):
 def test_sweep_run_loop_until_done(sweep_dir, monkeypatch):
     """sweep_run claims runs and executes until claim_next_run returns None."""
     import sweep as mod
+    import sweep.core as core
     os.makedirs(sweep_dir / "configs", exist_ok=True)
     mod.save_meta("loop", ["python", "x.py"])
     mod.save_runs("loop", ["a=1", "a=2"])
     claimed = []
     executed = []
-    original_claim = mod.claim_next_run
+    original_claim = core.claim_next_run
     def track_claim(sid):
         p = original_claim(sid)
         if p:
@@ -364,10 +337,98 @@ def test_sweep_run_loop_until_done(sweep_dir, monkeypatch):
         executed.append((cmd, line))
         return 0
     monkeypatch.setattr(mod, "claim_next_run", track_claim)
+    monkeypatch.setattr(core, "claim_next_run", track_claim)
     monkeypatch.setattr(mod, "execute_run", track_execute)
+    monkeypatch.setattr(core, "execute_run", track_execute)
     mod.sweep_run("loop")
     assert len(claimed) == 2
     assert claimed == ["a=1", "a=2"]
     assert len(executed) == 2
     assert executed[0][1] == "a=1"
     assert executed[1][1] == "a=2"
+
+
+# --- Review system tests ---
+
+def test_get_review_hashes_empty(sweep_dir):
+    """get_review_hashes returns empty set when no review file exists."""
+    import sweep as mod
+    result = mod.get_review_hashes("no_such_sweep")
+    assert result == set()
+
+
+def test_add_review_lines_by_hashes(sweep_dir):
+    """Staging runs in review makes them invisible to claim_next_run."""
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
+    os.makedirs(sweep_dir / "review", exist_ok=True)
+    mod.save_meta("rv1", ["python", "x.py"])
+    mod.save_runs("rv1", ["p=1", "p=2"])
+    h1 = mod.run_hash("p=1")
+    h2 = mod.run_hash("p=2")
+    mod.add_review_lines_by_hashes("rv1", [h1, h2])
+    review = mod.get_review_hashes("rv1")
+    assert h1 in review
+    assert h2 in review
+    # claim_next_run should skip review runs and return None
+    result = mod.claim_next_run("rv1")
+    assert result is None
+
+
+def test_add_review_lines_idempotent(sweep_dir):
+    """Adding the same hash twice does not duplicate it in the review file."""
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "review", exist_ok=True)
+    mod.save_meta("rv2", ["python", "x.py"])
+    mod.save_runs("rv2", ["q=1"])
+    h = mod.run_hash("q=1")
+    mod.add_review_lines_by_hashes("rv2", [h])
+    mod.add_review_lines_by_hashes("rv2", [h])
+    review = mod.get_review_hashes("rv2")
+    assert list(review).count(h) == 1
+
+
+def test_promote_from_review(sweep_dir):
+    """Promoting a run removes it from review and makes it claimable."""
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
+    os.makedirs(sweep_dir / "review", exist_ok=True)
+    mod.save_meta("rv3", ["python", "x.py"])
+    mod.save_runs("rv3", ["r=1"])
+    h = mod.run_hash("r=1")
+    mod.add_review_lines_by_hashes("rv3", [h])
+    assert h in mod.get_review_hashes("rv3")
+    mod.promote_from_review("rv3", {h})
+    assert h not in mod.get_review_hashes("rv3")
+    # Now claimable
+    result = mod.claim_next_run("rv3")
+    assert result == "r=1"
+
+
+def test_promote_nonexistent_review_file(sweep_dir):
+    """promote_from_review does not raise when review file is absent."""
+    import sweep as mod
+    # Should not raise even if no review file exists
+    mod.promote_from_review("no_review_sweep", {"abc123"})
+
+
+def test_append_runs_as_review(sweep_dir):
+    """append_runs_as_review adds runs to runs.txt and stages them in review."""
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
+    os.makedirs(sweep_dir / "review", exist_ok=True)
+    mod.save_meta("rv4", ["python", "x.py"])
+    mod.save_runs("rv4", [])
+    mod.append_runs_as_review("rv4", ["s=1", "s=2"])
+    lines = mod.get_runs("rv4")
+    assert "s=1" in lines and "s=2" in lines
+    review = mod.get_review_hashes("rv4")
+    assert mod.run_hash("s=1") in review
+    assert mod.run_hash("s=2") in review
+    # claim_next_run should return None (both runs are in review)
+    result = mod.claim_next_run("rv4")
+    assert result is None

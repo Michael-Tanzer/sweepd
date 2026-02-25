@@ -31,11 +31,11 @@ sweep create my_sweep \
 sweep run my_sweep
 
 # Or use the web UI
-uv run python sweep_web.py
+sweep web
 # Then open http://localhost:8765
 ```
 
-> **Development (without installing):** Replace `sweep` with `uv run python sweep_cli.py` in all commands above.
+> **Development (without installing):** Use `uv run sweep` in place of `sweep` for all commands above.
 
 ## CLI Commands
 
@@ -103,8 +103,12 @@ Delete a sweep and its associated files (config, runs, and ran status). Prompts 
 ### `sweep export-runs <id>`
 Print all run parameter lines (one per line) to stdout. Useful for piping or scripting.
 
-### `sweep migrate <id>`
-Migrate a legacy sweep from the old `.txt` format to the new layout (`meta.toml` + `runs.txt` + `ran/` directory). Idempotent if already migrated.
+### `sweep web`
+Start the web UI server (default: http://0.0.0.0:8765).
+
+**Flags:**
+- `--host`: Host to bind to (default: `0.0.0.0`).
+- `--port`: Port to listen on (default: `8765`).
 
 ## Default Command
 

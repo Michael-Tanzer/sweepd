@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FastAPI server for sweep manager: API + static web UI.
-Run with: uv run python sweep_web.py  or  uvicorn sweep_web:app --host 0.0.0.0 --port 8765
+Start with: sweep web  or  uvicorn sweep.web_app:app --host 0.0.0.0 --port 8765
 """
 import os
 from pathlib import Path
@@ -33,7 +33,7 @@ from sweep import (
     _review_path,
     _runs_path,
 )
-from sweep_cli import _expand_grid as expand_grid, _dedup_against_existing as dedup_against_existing
+from sweep.cli import _expand_grid as expand_grid, _dedup_against_existing as dedup_against_existing
 
 app = FastAPI(title="Sweep Manager")
 
@@ -294,9 +294,4 @@ def index():
     index_path = WEB_DIR / "index.html"
     if index_path.is_file():
         return FileResponse(index_path)
-    return {"message": "Web UI not found. Create web/index.html."}
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8765)
+    return {"message": "Web UI not found. Create sweep/web/index.html."}
