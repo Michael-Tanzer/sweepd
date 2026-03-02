@@ -13,7 +13,14 @@ dependencies = [
 ]
 
 [project.scripts]
-sweep = "sweep.cli:main"
+sweepd = "sweep.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sweep"]
 
 [dependency-groups]
 dev = [
