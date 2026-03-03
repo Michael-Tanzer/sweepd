@@ -62,12 +62,29 @@ def test_run_hash_different_runs():
     assert run_hash("a=1,b=2") != run_hash("a=1,b=3")
 
 
+def test_run_hash_order_independent_with_quoted_commas():
+    """Order-independent hash still holds when values contain commas inside quotes."""
+    from sweep import run_hash
+    h1 = run_hash('a="x, y",b=2')
+    h2 = run_hash('b=2,a="x, y"')
+    assert h1 == h2
+
+
 def test_param_line_to_dict():
     """Parse param line into dict for table UI."""
     from sweep import param_line_to_dict
     d = param_line_to_dict("training.lr=0.01,training.batch_size=8")
     assert d["training.lr"] == "0.01"
     assert d["training.batch_size"] == "8"
+
+
+def test_param_line_to_dict_with_quoted_commas():
+    """param_line_to_dict treats commas inside quotes as part of the value."""
+    from sweep import param_line_to_dict
+    line = 'a="x, y",b=2'
+    d = param_line_to_dict(line)
+    assert d["a"] == '"x, y"'
+    assert d["b"] == "2"
 
 
 def test_meta_runs_roundtrip(sweep_dir):
@@ -316,6 +333,25 @@ def test_execute_run_builds_correct_command(monkeypatch):
     execute_run(["python", "train.py"], "lr=0.01,batch_size=8")
     assert len(calls) == 1
     assert calls[0] == ["python", "train.py", "lr=0.01", "batch_size=8"]
+
+
+def test_execute_run_with_quoted_commas(monkeypatch):
+    """execute_run splits param_line on commas that are not inside quotes."""
+    from sweep import execute_run
+    calls = []
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return type("R", (), {"returncode": 0})()
+    monkeypatch.setattr("sweep.core.subprocess.run", fake_run)
+    line = 'run.name="model=BERT, lr=0.01",run.name="model=RoBERTa, lr=0.01"'
+    execute_run(["python", "train.py"], line)
+    assert len(calls) == 1
+    assert calls[0] == [
+        "python",
+        "train.py",
+        'run.name="model=BERT, lr=0.01"',
+        'run.name="model=RoBERTa, lr=0.01"',
+    ]
 
 
 def test_sweep_run_loop_until_done(sweep_dir, monkeypatch):

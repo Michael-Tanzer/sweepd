@@ -23,6 +23,7 @@ from sweep import (
     _ran_path,
     _runs_path,
 )
+from sweep.core import split_param_line
 
 
 def _expand_grid(base_line, grid_specs):
@@ -46,7 +47,7 @@ def _expand_grid(base_line, grid_specs):
             continue
         key, _, vals = spec.partition("=")
         key = key.strip()
-        values = [v.strip() for v in vals.split(",") if v.strip()]
+        values = [v.strip() for v in split_param_line(vals) if v.strip()]
         if values:
             axes.append((key, values))
 

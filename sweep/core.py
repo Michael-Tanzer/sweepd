@@ -61,12 +61,38 @@ def get_review_dir():
     return os.path.join(get_sweep_dir(), "review")
 
 
+def split_param_line(param_line):
+    """
+    Splits a param line on commas that are not inside single or double quotes.
+    Returns a list of segments (not stripped).
+    """
+    segments = []
+    current = []
+    in_single = False
+    in_double = False
+    for ch in param_line:
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            current.append(ch)
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+            current.append(ch)
+        elif ch == "," and not in_single and not in_double:
+            segments.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        segments.append("".join(current))
+    return segments
+
+
 def param_line_to_dict(param_line):
     """
     Parses a param line (key=val,key2=val2) into a dict. Used for table UI (one key per column).
     """
     out = {}
-    for p in param_line.split(","):
+    for p in split_param_line(param_line):
         p = p.strip()
         if not p:
             continue
@@ -83,7 +109,7 @@ def _canonical_param_line(param_line):
     Normalize param line to key-sorted form for order-independent hashing.
     Parses key=value pairs (comma-separated), sorts by key, rejoins.
     """
-    parts = [p.strip() for p in param_line.split(",") if p.strip()]
+    parts = [p.strip() for p in split_param_line(param_line) if p.strip()]
     pairs = []
     for p in parts:
         if "=" in p:
@@ -322,7 +348,7 @@ def execute_run(command, param_line):
     Runs command + Hydra overrides. command is list of args; param_line is comma-separated overrides.
     Returns exit code of the subprocess.
     """
-    params = [p.strip() for p in param_line.split(",") if p.strip()]
+    params = [p.strip() for p in split_param_line(param_line) if p.strip()]
     cmd = command + params
     print(f"Executing: {' '.join(cmd)}")
     sys.stdout.flush()
