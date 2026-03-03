@@ -236,6 +236,30 @@ def test_api_default_command_not_found(client):
     assert r.status_code == 404
 
 
+def test_api_grid_preview(client, sweep_dir):
+    """POST /api/grid-preview returns cartesian product of runs."""
+    r = client.post("/api/grid-preview", json={
+        "base": "",
+        "grid": ["lr=0.01,0.001", "bs=8,16"],
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["count"] == 4
+    assert len(data["runs"]) == 4
+    assert any("lr=0.01" in line and "bs=8" in line for line in data["runs"])
+
+
+def test_api_grid_preview_with_quoted_commas(client, sweep_dir):
+    """POST /api/grid-preview preserves commas inside quotes."""
+    line = 'run.name="model=BERT, lr=0.01","model=RoBERTa, lr=0.01"'
+    r = client.post("/api/grid-preview", json={"base": "", "grid": [line]})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["count"] == 2
+    assert 'run.name="model=BERT, lr=0.01"' in data["runs"]
+    assert 'run.name="model=RoBERTa, lr=0.01"' in data["runs"]
+
+
 def test_api_mark_review(client, sweep_dir):
     """POST /api/sweeps/<id>/runs/mark-review stages runs; GET shows status 'review'."""
     import sweep as mod

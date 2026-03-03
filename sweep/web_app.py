@@ -72,6 +72,10 @@ class RemoveRunsBody(BaseModel):
     indices: list[int]
 
 
+class GridPreviewBody(BaseModel):
+    base: str = ""
+    grid: list[str]
+
 def _runs_to_table_rows(param_lines, completed_hashes, review_hashes=None):
     """Returns list of dicts: { index, hash, status, ...key: value } and set of all keys.
 
@@ -114,6 +118,17 @@ def api_default_command():
     if not cmd:
         raise HTTPException(status_code=404, detail="No default command configured")
     return {"command": cmd}
+
+
+@app.post("/api/grid-preview")
+def api_grid_preview(body: GridPreviewBody):
+    """Preview runs generated from base + grid using the same logic as CLI."""
+    if not body.grid:
+        raise HTTPException(status_code=400, detail="Provide grid lines.")
+    runs = expand_grid(body.base or "", body.grid)
+    if not runs:
+        raise HTTPException(status_code=400, detail="No runs generated.")
+    return {"runs": runs, "count": len(runs)}
 
 
 @app.get("/api/sweeps/{sweep_id}")

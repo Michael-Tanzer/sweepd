@@ -521,7 +521,7 @@
     document.getElementById('filter').addEventListener('change', renderTable);
     document.getElementById('filter-text').addEventListener('input', renderTable);
 
-    document.getElementById('qc-generate').addEventListener('click', () => {
+    document.getElementById('qc-generate').addEventListener('click', async () => {
       const base = document.getElementById('qc-base').value.trim();
       const gridText = document.getElementById('qc-grid').value.trim();
       const grid = gridText ? gridText.split(/\n/).map(s => s.trim()).filter(Boolean) : [];
@@ -529,23 +529,19 @@
         showMsg('qc-msg', 'Enter at least one grid line (key=val1,val2,...).', true);
         return;
       }
-      const runs = [];
-      function product(axisIdx, soFar) {
-        if (axisIdx >= grid.length) {
-          runs.push((base ? base + ',' : '') + soFar.join(','));
-          return;
-        }
-        const line = grid[axisIdx];
-        const eq = line.indexOf('=');
-        if (eq === -1) return;
-        const key = line.slice(0, eq).trim();
-        const vals = line.slice(eq + 1).split(',').map(s => s.trim()).filter(Boolean);
-        vals.forEach(v => product(axisIdx + 1, soFar.concat([key + '=' + v])));
+      try {
+        const res = await fetchJson('/api/grid-preview', {
+          method: 'POST',
+          body: JSON.stringify({ base, grid })
+        });
+        generatedRows = res.runs || [];
+        document.getElementById('qc-count').textContent = generatedRows.length + ' runs generated';
+        hideMsg('qc-msg');
+      } catch (err) {
+        generatedRows = [];
+        document.getElementById('qc-count').textContent = '';
+        showMsg('qc-msg', err.message, true);
       }
-      product(0, []);
-      generatedRows = runs;
-      document.getElementById('qc-count').textContent = generatedRows.length + ' runs generated';
-      hideMsg('qc-msg');
     });
 
     document.getElementById('qc-save-new').addEventListener('click', async () => {
