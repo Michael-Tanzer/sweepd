@@ -7,8 +7,10 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%231a1a1a'/><circle cx='5' cy='5' r='2' fill='%23ffffff' opacity='0.3'/><circle cx='11' cy='5' r='2' fill='%23ffffff' opacity='0.3'/><circle cx='5' cy='11' r='2' fill='%234ade80'/><circle cx='11' cy='11' r='2' fill='%234ade80'/></svg>">
   <style>
     :root {
-      --bg: #ffffff;
+      --bg: #f9fafb;
       --fg: #1a1a1a;
+      --card: #ffffff;
+      --card-foreground: #111827;
       --muted: #6b7280;
       --accent: #3b82f6;
       --accent-hover: #2563eb;
@@ -18,6 +20,12 @@
       --border: #e5e7eb;
       --hover: #f9fafb;
       --selected: #eff6ff;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --destructive: #ef4444;
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 8px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -25,26 +33,28 @@
       font-size: 14px;
       background: var(--bg);
       color: var(--fg);
-      padding: 20px;
+      padding: 24px 20px;
       line-height: 1.5;
     }
+    .layout {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
     h1 { font-size: 24px; font-weight: 600; margin-bottom: 20px; color: var(--fg); }
-    h2 { font-size: 18px; font-weight: 600; margin-bottom: 12px; color: var(--fg); }
-    section {
+    h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--fg); }
+
+    /* Card */
+    .card {
       background: white;
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 16px;
       margin-bottom: 16px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
-    label {
-      display: inline-block;
-      font-weight: 500;
-      color: var(--fg);
-      margin-right: 8px;
-      min-width: 80px;
-    }
-    input, select, button, textarea {
+
+    /* Inputs */
+    input, select, textarea {
       font-family: inherit;
       font-size: 14px;
       padding: 8px 12px;
@@ -59,33 +69,53 @@
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
     }
-    button {
-      cursor: pointer;
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-family: inherit;
+      font-size: 14px;
       font-weight: 500;
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      white-space: nowrap;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+    .btn-primary {
       background: var(--accent);
       color: white;
       border-color: var(--accent);
-      padding: 8px 16px;
     }
-    button:hover {
-      background: var(--accent-hover);
-      border-color: var(--accent-hover);
-    }
-    button.secondary {
+    .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .btn-secondary {
       background: white;
-      color: var(--accent);
-      border-color: var(--accent);
+      color: var(--fg);
+      border-color: var(--border);
     }
-    button.secondary:hover {
-      background: var(--hover);
+    .btn-secondary:hover { background: #f3f4f6; }
+    .btn-destructive {
+      background: var(--destructive);
+      color: white;
+      border-color: var(--destructive);
     }
-    button.danger {
-      background: var(--red);
-      border-color: var(--red);
+    .btn-destructive:hover { background: #dc2626; }
+    .btn-destructive-outline {
+      background: white;
+      color: var(--destructive);
+      border-color: var(--destructive);
     }
-    button.danger:hover {
-      background: #dc2626;
+    .btn-destructive-outline:hover { background: #fee2e2; }
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 13px;
     }
+
+    /* Table */
     table {
       border-collapse: collapse;
       width: 100%;
@@ -105,187 +135,206 @@
       top: 0;
       z-index: 10;
     }
-    tbody tr {
-      transition: background 0.15s;
-    }
-    tbody tr:hover {
-      background: var(--hover);
-    }
-    tbody tr.selected {
-      background: var(--selected);
-    }
-    tbody tr.ran {
-      opacity: 0.7;
-    }
-    .status-ran {
-      color: var(--green);
+    tbody tr { transition: background 0.15s; }
+    tbody tr:hover { background: var(--hover); }
+    tbody tr.selected { background: var(--selected); }
+    tbody tr.ran { opacity: 0.7; }
+
+    /* Badges */
+    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 500; }
+    .badge-success { background: #d1fae5; color: #065f46; }
+    .badge-warning { background: #fef3c7; color: #92400e; }
+    .badge-danger  { background: #fee2e2; color: #991b1b; }
+
+    /* Stats */
+    .stats-container { display: flex; gap: 24px; padding: 16px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; align-items: flex-start; flex-wrap: wrap; }
+    .stat-item { display: flex; flex-direction: column; }
+    .stat-value { font-size: 20px; font-weight: 600; }
+    .stat-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .text-green { color: var(--success); }
+    .text-amber { color: var(--warning); }
+    .text-red { color: var(--destructive); }
+
+    /* Progress bar */
+    .progress-bar { height: 4px; background: #f3f4f6; border-radius: 2px; overflow: hidden; width: 80px; margin-top: 8px; }
+    .progress-fill { height: 100%; background: var(--success); }
+
+    /* Toolbar */
+    .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 16px; }
+    .toolbar-filters { display: flex; gap: 8px; flex: 1; align-items: center; }
+    .toolbar-actions { display: flex; gap: 8px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+    .toolbar-divider { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
+
+    /* Utilities */
+    .flex { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    #sweep-list { min-width: 200px; }
+    #filter { min-width: 120px; }
+    #filter-text { flex: 1; min-width: 200px; }
+
+    .msg {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 1000;
+      padding: 12px 16px;
+      border-radius: 6px;
       font-weight: 500;
+      min-width: 260px;
+      max-width: 420px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.12);
     }
-    .status-pending {
-      color: var(--red);
-      font-weight: 500;
-    }
-    .status-review {
-      color: var(--amber);
-      font-weight: 500;
-    }
-    .flex {
+    .msg.ok { background: #d1fae5; color: #065f46; border: 1px solid var(--green); }
+    .msg.err { background: #fee2e2; color: #991b1b; border: 1px solid var(--red); }
+
+    .hash { font-family: 'Courier New', monospace; font-size: 12px; color: var(--muted); }
+
+    input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); }
+
+    /* Table wrap scrollbar */
+    #table-wrap { overflow-x: auto; }
+    #table-wrap::-webkit-scrollbar { height: 8px; }
+    #table-wrap::-webkit-scrollbar-track { background: transparent; }
+    #table-wrap::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 4px; }
+
+    /* Add runs panel */
+    #add-runs-panel { margin-top: 12px; display: none; }
+    #add-runs-panel textarea { width: 100%; min-height: 80px; font-family: 'Courier New', monospace; font-size: 13px; margin-bottom: 8px; }
+
+    /* Quick create form */
+    .form-group { margin-bottom: 14px; }
+    .form-group > label { display: block; font-weight: 500; margin-bottom: 6px; color: var(--fg); }
+    .form-group input[type="text"],
+    .form-group textarea { width: 100%; }
+    .form-group textarea { font-family: 'Courier New', monospace; font-size: 13px; min-height: 80px; resize: vertical; }
+    .qc-hint-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
+    .qc-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 12px;
       align-items: center;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+      margin-top: 4px;
     }
-    .grid-form .row {
-      margin-bottom: 12px;
-    }
-    .grid-form label {
-      min-width: 200px;
-    }
-    .grid-form input[type="text"] {
-      flex: 1;
-      min-width: 200px;
-    }
-    .grid-form textarea {
-      width: 100%;
-      min-height: 80px;
-      font-family: 'Courier New', monospace;
-      font-size: 13px;
-    }
-    #sweep-list {
-      min-width: 200px;
-    }
-    .msg {
-      margin: 12px 0;
-      padding: 12px;
-      border-radius: 6px;
-      font-weight: 500;
-    }
-    .msg.ok {
-      background: #d1fae5;
-      color: #065f46;
-      border: 1px solid var(--green);
-    }
-    .msg.err {
-      background: #fee2e2;
-      color: #991b1b;
-      border: 1px solid var(--red);
-    }
-    #filter {
-      min-width: 120px;
-    }
-    #filter-text {
-      flex: 1;
-      min-width: 200px;
-    }
-    .hash {
-      font-family: 'Courier New', monospace;
-      font-size: 12px;
-      color: var(--muted);
-    }
-    input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
-      cursor: pointer;
-      accent-color: var(--accent);
-    }
-    #table-wrap {
-      overflow-x: auto;
-    }
-    #add-runs-panel {
-      margin-top: 12px;
-      display: none;
-    }
-    #add-runs-panel textarea {
-      width: 100%;
-      min-height: 80px;
-      font-family: 'Courier New', monospace;
-      font-size: 13px;
-      margin-bottom: 8px;
-    }
+    .qc-action-group { display: flex; align-items: center; gap: 8px; }
   </style>
 </head>
 <body>
+<div class="layout">
   <h1>Sweep Manager</h1>
 
-  <section>
+  <!-- Section 1: Sweep Selector -->
+  <section class="card">
     <div class="flex">
-      <label>Sweep</label>
+      <label style="font-weight:500; min-width:unset;">Sweep</label>
       <select id="sweep-list">
         <option value="">-- Select or create --</option>
       </select>
-      <button type="button" id="btn-refresh" class="secondary">Refresh</button>
-      <button type="button" id="btn-delete-sweep" class="danger" style="display:none;">Delete sweep</button>
+      <button type="button" id="btn-refresh" class="btn btn-secondary">Refresh</button>
+      <button type="button" id="btn-delete-sweep" class="btn btn-destructive btn-sm" style="display:none; margin-left:auto;">Delete sweep</button>
     </div>
   </section>
 
-  <section id="section-quick-create">
+  <!-- Section 3: Quick Create -->
+  <section class="card" id="section-quick-create">
     <h2>Quick create / Add to existing</h2>
-    <div class="grid-form">
-      <div class="row flex">
-        <label>Base (optional)</label>
-        <input type="text" id="qc-base" placeholder="gpu=0" />
-      </div>
-      <div class="row flex">
-        <label>Grid (one per line: key=val1,val2,...)</label>
-        <div style="flex:1; min-width:200px;">
-          <textarea id="qc-grid" style="width:100%;" placeholder="training.lr=0.01,0.001&#10;training.batch_size=8,16"></textarea>
-          <small style="color: var(--muted); font-size: 12px;">Each line: key=val1,val2,... — runs are the cartesian product</small>
+
+    <div class="form-group">
+      <label>Base params (optional)</label>
+      <input type="text" id="qc-base" placeholder="e.g. gpu=0" />
+    </div>
+
+    <div class="form-group">
+      <label>Grid configuration</label>
+      <textarea id="qc-grid" placeholder="One per line: key=val1,val2,...&#10;e.g. training.lr=0.01,0.001&#10;     training.batch_size=8,16"></textarea>
+      <div class="qc-hint-row">
+        <small style="color: var(--muted);">Each line: key=val1,val2,... — runs are the cartesian product</small>
+        <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+          <span id="qc-count" style="color: var(--muted); font-size:13px;"></span>
+          <button type="button" id="qc-generate" class="btn btn-secondary btn-sm">Generate runs</button>
         </div>
       </div>
-      <div class="row flex">
-        <button type="button" id="qc-generate" class="secondary">Generate runs</button>
-        <span id="qc-count" style="color: var(--muted);"></span>
-      </div>
-      <div class="row flex">
-        <label style="min-width:auto; font-weight:400; display:flex; align-items:center; gap:6px;">
-          <input type="checkbox" id="qc-as-review" style="width:16px; height:16px;" />
-          Add as "in review"
-        </label>
-      </div>
-      <div class="row flex">
-        <label>Save as</label>
-        <input type="text" id="qc-sweep-id" placeholder="new_sweep_id" />
-        <button type="button" id="qc-save-new">Save as new sweep</button>
-        <label>Or add to</label>
-        <select id="qc-add-to"></select>
-        <button type="button" id="qc-add-existing" class="secondary">Add to existing sweep</button>
-      </div>
-      <div id="qc-msg" class="msg" style="display:none;"></div>
     </div>
+
+    <div class="qc-actions">
+      <label style="font-weight:400; display:flex; align-items:center; gap:6px; cursor:pointer;">
+        <input type="checkbox" id="qc-as-review" style="width:16px; height:16px;" />
+        Add as "in review"
+      </label>
+
+      <div class="qc-action-group" style="margin-left:auto;">
+        <input type="text" id="qc-sweep-id" placeholder="New sweep ID" style="width:180px;" />
+        <button type="button" id="qc-save-new" class="btn btn-primary btn-sm">Save as new sweep</button>
+      </div>
+
+      <span style="color: var(--muted); font-size:13px;">or</span>
+
+      <div class="qc-action-group">
+        <select id="qc-add-to" style="width:160px;"></select>
+        <button type="button" id="qc-add-existing" class="btn btn-secondary btn-sm">Add to existing</button>
+      </div>
+    </div>
+
+    <div id="qc-msg" class="msg" style="display:none;"></div>
   </section>
 
-  <section id="section-sweep" style="display:none;">
-    <div style="display:flex; align-items:baseline; gap:12px; margin-bottom:12px;">
-      <h2 style="margin-bottom:0;">Sweep: <span id="current-sweep-id"></span></h2>
-      <span id="sweep-summary" style="color: var(--muted); font-size: 13px;"></span>
+  <!-- Section 4: Sweep Details -->
+  <section class="card" id="section-sweep" style="display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; padding-bottom:16px; border-bottom:1px solid var(--border); margin-bottom:16px;">
+      <h2 style="margin-bottom:0; align-self:center;">Sweep: <span id="current-sweep-id"></span></h2>
+      <div id="sweep-stats" class="stats-container" style="padding:0; border:none; margin:0; gap:20px;">
+        <div class="stat-item">
+          <span class="stat-value text-green" id="stat-ran">0</span>
+          <span class="stat-label">Ran</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value text-amber" id="stat-review">0</span>
+          <span class="stat-label">In Review</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value text-red" id="stat-pending">0</span>
+          <span class="stat-label">Pending</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value" id="stat-pct">0%</span>
+          <div class="progress-bar"><div class="progress-fill" id="stat-bar" style="width:0%"></div></div>
+        </div>
+      </div>
     </div>
-    <div class="flex">
-      <label>Filter</label>
-      <select id="filter">
-        <option value="">All</option>
-        <option value="ran">Ran</option>
-        <option value="review">In review</option>
-        <option value="pending">Pending</option>
-      </select>
-      <input type="text" id="filter-text" placeholder="Search..." />
-      <button type="button" id="btn-add-runs" class="secondary">Add runs</button>
-      <button type="button" id="btn-mark-rerun" class="secondary">Mark selected for rerun</button>
-      <button type="button" id="btn-mark-ran" class="secondary">Mark selected as ran</button>
-      <button type="button" id="btn-mark-review" class="secondary">Mark selected as review</button>
-      <button type="button" id="btn-promote-review" class="secondary">Promote selected to pending</button>
-      <button type="button" id="btn-remove-selected" class="danger" style="margin-left:auto;">Remove selected</button>
+
+    <div class="toolbar">
+      <div class="toolbar-filters">
+        <select id="filter">
+          <option value="">All</option>
+          <option value="ran">Ran</option>
+          <option value="review">In review</option>
+          <option value="pending">Pending</option>
+        </select>
+        <input type="text" id="filter-text" placeholder="Search..." />
+      </div>
+      <div class="toolbar-actions">
+        <button type="button" id="btn-add-runs" class="btn btn-secondary btn-sm">+ Add Runs</button>
+        <div class="toolbar-divider"></div>
+        <button type="button" id="btn-mark-ran" class="btn btn-secondary btn-sm">Mark Ran</button>
+        <button type="button" id="btn-mark-review" class="btn btn-secondary btn-sm">Mark Review</button>
+        <button type="button" id="btn-mark-rerun" class="btn btn-secondary btn-sm">Rerun</button>
+        <button type="button" id="btn-promote-review" class="btn btn-secondary btn-sm">Promote</button>
+        <button type="button" id="btn-remove-selected" class="btn btn-destructive-outline btn-sm">Remove</button>
+      </div>
     </div>
+
     <div id="add-runs-panel">
-      <textarea id="add-runs-text" placeholder="One param line per line, e.g. training.lr=0.01,training.bs=8"></textarea>
+      <textarea id="add-runs-text" placeholder="One param line per run, e.g. training.lr=0.01,training.bs=8"></textarea>
       <div class="flex">
-        <button type="button" id="btn-add-runs-submit">Add runs</button>
-        <button type="button" id="btn-add-runs-cancel" class="secondary">Cancel</button>
-        <label style="min-width:auto; font-weight:400; display:flex; align-items:center; gap:6px;">
+        <button type="button" id="btn-add-runs-submit" class="btn btn-primary btn-sm">Add runs</button>
+        <button type="button" id="btn-add-runs-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+        <label style="font-weight:400; display:flex; align-items:center; gap:6px; cursor:pointer;">
           <input type="checkbox" id="add-runs-as-review" style="width:16px; height:16px;" />
           Add as "in review"
         </label>
       </div>
     </div>
+
     <div id="table-wrap"></div>
     <div id="sweep-msg" class="msg" style="display:none;"></div>
   </section>
@@ -372,13 +421,17 @@
         currentColumns = data.columns || [];
         document.getElementById('current-sweep-id').textContent = sweepId;
         document.getElementById('section-sweep').style.display = 'block';
-        document.getElementById('btn-delete-sweep').style.display = 'inline-block';
+        document.getElementById('btn-delete-sweep').style.display = 'inline-flex';
         const total = data.total_count || 0;
         const completed = data.completed_count || 0;
         const review = data.review_count || 0;
         const pending = total - completed - review;
-        document.getElementById('sweep-summary').textContent =
-          completed + ' ran / ' + review + ' in review / ' + pending + ' pending';
+        document.getElementById('stat-ran').textContent = completed;
+        document.getElementById('stat-review').textContent = review;
+        document.getElementById('stat-pending').textContent = pending;
+        const pct = total ? Math.round(completed / total * 100) : 0;
+        document.getElementById('stat-pct').textContent = pct + '%';
+        document.getElementById('stat-bar').style.width = pct + '%';
         renderTable();
         hideMsg('sweep-msg');
       } catch (err) {
@@ -411,15 +464,16 @@
             return `<td class="hash">${escapeHtml(String(v))}</td>`;
           }
           if (c === 'status') {
-            const cls = v === 'ran' ? 'status-ran' : v === 'review' ? 'status-review' : 'status-pending';
-            return `<td class="${cls}">${escapeHtml(String(v))}</td>`;
+            const badgeClass = v === 'ran' ? 'badge-success' : v === 'review' ? 'badge-warning' : 'badge-danger';
+            const label = v === 'ran' ? 'Ran' : v === 'review' ? 'In Review' : 'Pending';
+            return `<td><span class="badge ${badgeClass}">${label}</span></td>`;
           }
           return `<td>${v === undefined ? '' : escapeHtml(String(v))}</td>`;
         }).join('');
         return `<tr class="${r.status}" data-index="${r.index}" data-hash="${r.hash}"><td><input type="checkbox" class="row-cb" /></td>${cells}</tr>`;
       }).join('');
       document.getElementById('table-wrap').innerHTML = '<table><thead>' + thead + '</thead><tbody>' + tbody + '</tbody></table>';
-      
+
       const selectAll = document.getElementById('select-all');
       if (selectAll) {
         selectAll.addEventListener('change', e => {
@@ -427,7 +481,7 @@
           updateSelectedRows();
         });
       }
-      
+
       document.querySelectorAll('.row-cb').forEach(cb => {
         cb.addEventListener('change', updateSelectedRows);
       });
@@ -663,5 +717,6 @@
 
     loadSweepList();
   </script>
+</div>
 </body>
 </html>
