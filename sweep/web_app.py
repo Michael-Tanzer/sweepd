@@ -16,7 +16,10 @@ from sweep import (
     add_review_lines_by_hashes,
     append_runs,
     append_runs_as_review,
+    clone_sweep,
+    get_completed_exit_codes,
     get_completed_hashes,
+    get_run_timings,
     get_default_command,
     get_review_hashes,
     get_runs,
@@ -28,11 +31,8 @@ from sweep import (
     run_hash,
     save_meta,
     save_runs,
-    _meta_path,
-    _ran_path,
-    _review_path,
-    _runs_path,
 )
+from sweep.core import _meta_path, _ran_path, _review_path, _runs_path
 from sweep.cli import _expand_grid as expand_grid, _dedup_against_existing as dedup_against_existing
 
 app = FastAPI(title="Sweep Manager")
@@ -76,21 +76,34 @@ class GridPreviewBody(BaseModel):
     base: str = ""
     grid: list[str]
 
-def _runs_to_table_rows(param_lines, completed_hashes, review_hashes=None):
-    """Returns list of dicts: { index, hash, status, ...key: value } and set of all keys.
 
-    status is one of: 'ran', 'review', 'pending'.
+class CloneSweepBody(BaseModel):
+    new_sweep_id: str
+
+
+def _runs_to_table_rows(param_lines, completed_hashes, review_hashes=None, exit_codes=None, timings=None):
+    """Returns list of dicts: { index, hash, status, exit_code, duration, ...key: value } and set of all keys.
+
+    status is one of: 'ran', 'failed', 'review', 'pending'.
+    exit_code is an int or None. duration is seconds (float) or None.
     """
     if review_hashes is None:
         review_hashes = set()
+    if exit_codes is None:
+        exit_codes = {}
+    if timings is None:
+        timings = {}
     all_keys = set()
     rows = []
     for i, line in enumerate(param_lines):
         h = run_hash(line)
         d = param_line_to_dict(line)
         all_keys.update(d.keys())
+        ec = exit_codes.get(h)
+        timing = timings.get(h)
+        duration = timing["duration"] if timing and timing.get("duration") is not None else None
         if h in completed_hashes:
-            status = "ran"
+            status = "failed" if ec is not None and ec != 0 else "ran"
         elif h in review_hashes:
             status = "review"
         else:
@@ -99,6 +112,8 @@ def _runs_to_table_rows(param_lines, completed_hashes, review_hashes=None):
             "index": i,
             "hash": h,
             "status": status,
+            "exit_code": ec,
+            "duration": round(duration, 1) if duration is not None else None,
             "param_line": line,
             **d,
         })
@@ -109,6 +124,30 @@ def _runs_to_table_rows(param_lines, completed_hashes, review_hashes=None):
 def api_list_sweeps():
     """List sweep IDs."""
     return {"sweep_ids": list_sweep_ids()}
+
+
+@app.get("/api/sweeps/summary")
+def api_sweeps_summary():
+    """Return lightweight summary stats for all sweeps."""
+    summaries = []
+    for sid in list_sweep_ids():
+        try:
+            _, param_lines = get_sweep_config(sid)
+        except (FileNotFoundError, ValueError):
+            continue
+        total = len(param_lines)
+        completed = len(get_completed_hashes(sid))
+        review = len(get_review_hashes(sid))
+        exit_codes = get_completed_exit_codes(sid)
+        failed = sum(1 for ec in exit_codes.values() if ec != 0)
+        summaries.append({
+            "sweep_id": sid,
+            "total": total,
+            "completed": completed,
+            "review": review,
+            "failed": failed,
+        })
+    return {"sweeps": summaries}
 
 
 @app.get("/api/default-command")
@@ -140,7 +179,9 @@ def api_get_sweep(sweep_id: str):
         raise HTTPException(status_code=404, detail=f"Sweep not found: {sweep_id}")
     completed = get_completed_hashes(sweep_id)
     review = get_review_hashes(sweep_id)
-    rows, columns = _runs_to_table_rows(param_lines, completed, review)
+    exit_codes = get_completed_exit_codes(sweep_id)
+    timings = get_run_timings(sweep_id)
+    rows, columns = _runs_to_table_rows(param_lines, completed, review, exit_codes, timings)
     return {
         "sweep_id": sweep_id,
         "command": command,
@@ -286,6 +327,16 @@ def api_delete_sweep(sweep_id: str):
             os.remove(path)
             removed.append(path)
     return {"removed": removed}
+
+
+@app.post("/api/sweeps/{sweep_id}/clone")
+def api_clone_sweep(sweep_id: str, body: CloneSweepBody):
+    """Clone a sweep (meta + runs) to a new ID. No ran/review/timing history."""
+    try:
+        clone_sweep(sweep_id, body.new_sweep_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Sweep not found: {sweep_id}")
+    return {"sweep_id": body.new_sweep_id}
 
 
 @app.post("/api/sweeps/{sweep_id}/runs/remove")

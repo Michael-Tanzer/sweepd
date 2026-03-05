@@ -145,6 +145,7 @@
     .badge-success { background: #d1fae5; color: #065f46; }
     .badge-warning { background: #fef3c7; color: #92400e; }
     .badge-danger  { background: #fee2e2; color: #991b1b; }
+    .badge-muted   { background: #f3f4f6; color: #6b7280; }
 
     /* Stats */
     .stats-container { display: flex; gap: 24px; padding: 16px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; align-items: flex-start; flex-wrap: wrap; }
@@ -217,11 +218,93 @@
       margin-top: 4px;
     }
     .qc-action-group { display: flex; align-items: center; gap: 8px; }
+
+    /* Dark mode */
+    [data-theme="dark"] {
+      --bg: #0f1117;
+      --fg: #e5e7eb;
+      --card: #1a1d2e;
+      --card-foreground: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --green: #34d399;
+      --red: #f87171;
+      --amber: #fbbf24;
+      --border: #2d3348;
+      --hover: #1e2235;
+      --selected: #1e3a5f;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --destructive: #f87171;
+    }
+    [data-theme="dark"] .card { background: var(--card); box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+    [data-theme="dark"] input,
+    [data-theme="dark"] select,
+    [data-theme="dark"] textarea { background: var(--hover); color: var(--fg); border-color: var(--border); }
+    [data-theme="dark"] .btn-secondary { background: var(--hover); color: var(--fg); border-color: var(--border); }
+    [data-theme="dark"] .btn-secondary:hover { background: var(--card); }
+    [data-theme="dark"] .btn-destructive-outline { background: var(--hover); }
+    [data-theme="dark"] .btn-destructive-outline:hover { background: #3b1c1c; }
+    [data-theme="dark"] .badge-success { background: #064e3b; color: #6ee7b7; }
+    [data-theme="dark"] .badge-warning { background: #78350f; color: #fde68a; }
+    [data-theme="dark"] .badge-danger  { background: #7f1d1d; color: #fca5a5; }
+    [data-theme="dark"] .badge-muted   { background: #374151; color: #9ca3af; }
+    [data-theme="dark"] .progress-bar { background: #374151; }
+    [data-theme="dark"] .msg.ok { background: #064e3b; color: #6ee7b7; border-color: var(--green); }
+    [data-theme="dark"] .msg.err { background: #7f1d1d; color: #fca5a5; border-color: var(--red); }
+    [data-theme="dark"] th { background: var(--hover); color: var(--fg); }
+
+    /* Theme toggle */
+    .theme-toggle {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
+      color: var(--fg);
+    }
+    .theme-toggle:hover { background: var(--hover); }
+
+    /* Sortable columns */
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { background: var(--selected); }
+    th .sort-arrow { font-size: 11px; margin-left: 4px; opacity: 0.5; }
+    th .sort-arrow.active { opacity: 1; }
+
+    /* Auto-refresh toggle */
+    .auto-refresh-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .auto-refresh-toggle input { width: 16px; height: 16px; }
+
+    /* Dashboard cards */
+    .dash-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .dash-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(59,130,246,0.1); }
+    .dash-card-title { font-weight: 600; font-size: 14px; margin-bottom: 8px; word-break: break-all; }
+    .dash-card-stats { display: flex; gap: 12px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+    .dash-card .progress-bar { width: 100%; height: 6px; }
   </style>
 </head>
 <body>
 <div class="layout">
-  <h1>Sweep Manager</h1>
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+    <h1 style="margin-bottom:0;">Sweep Manager</h1>
+    <button class="theme-toggle" id="theme-toggle" title="Toggle dark mode">🌙</button>
+  </div>
 
   <!-- Section 1: Sweep Selector -->
   <section class="card">
@@ -231,8 +314,19 @@
         <option value="">-- Select or create --</option>
       </select>
       <button type="button" id="btn-refresh" class="btn btn-secondary">Refresh</button>
-      <button type="button" id="btn-delete-sweep" class="btn btn-destructive btn-sm" style="display:none; margin-left:auto;">Delete sweep</button>
+      <label class="auto-refresh-toggle">
+        <input type="checkbox" id="auto-refresh-toggle" />
+        Auto (5s)
+      </label>
+      <button type="button" id="btn-clone-sweep" class="btn btn-secondary btn-sm" style="display:none; margin-left:auto;">Clone</button>
+      <button type="button" id="btn-delete-sweep" class="btn btn-destructive btn-sm" style="display:none;">Delete sweep</button>
     </div>
+  </section>
+
+  <!-- Section 2: Sweep Dashboard (shown when no sweep selected) -->
+  <section class="card" id="section-dashboard" style="display:none;">
+    <h2>All Sweeps</h2>
+    <div id="dashboard-cards" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:12px;"></div>
   </section>
 
   <!-- Section 3: Quick Create -->
@@ -288,6 +382,10 @@
           <span class="stat-label">Ran</span>
         </div>
         <div class="stat-item">
+          <span class="stat-value text-red" id="stat-failed">0</span>
+          <span class="stat-label">Failed</span>
+        </div>
+        <div class="stat-item">
           <span class="stat-value text-amber" id="stat-review">0</span>
           <span class="stat-label">In Review</span>
         </div>
@@ -307,6 +405,7 @@
         <select id="filter">
           <option value="">All</option>
           <option value="ran">Ran</option>
+          <option value="failed">Failed</option>
           <option value="review">In review</option>
           <option value="pending">Pending</option>
         </select>
@@ -411,6 +510,48 @@
       addTo.innerHTML = '<option value="">-- select --</option>' +
         (data.sweep_ids || []).map(id => `<option value="${id}">${id}</option>`).join('');
       if (prev && data.sweep_ids.includes(prev)) sel.value = prev;
+      // Load dashboard if no sweep selected
+      if (!currentSweepId) loadDashboard();
+    }
+
+    async function loadDashboard() {
+      const dash = document.getElementById('section-dashboard');
+      const cards = document.getElementById('dashboard-cards');
+      try {
+        const data = await fetchJson('/api/sweeps/summary');
+        if (!data.sweeps || data.sweeps.length === 0) {
+          dash.style.display = 'none';
+          return;
+        }
+        dash.style.display = 'block';
+        cards.innerHTML = data.sweeps.map(s => {
+          const failed = s.failed || 0;
+          const succeeded = s.completed - failed;
+          const pending = s.total - s.completed - s.review;
+          const pct = s.total ? Math.round(s.completed / s.total * 100) : 0;
+          return `<div class="dash-card" data-sid="${escapeHtml(s.sweep_id)}">
+            <div class="dash-card-title">${escapeHtml(s.sweep_id)}</div>
+            <div class="dash-card-stats">
+              <span class="text-green">${succeeded} ran</span>
+              ${failed ? `<span class="text-red">${failed} failed</span>` : ''}
+              <span class="text-amber">${s.review} review</span>
+              <span class="text-red">${pending} pending</span>
+              <span style="margin-left:auto;">${pct}%</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+          </div>`;
+        }).join('');
+        cards.querySelectorAll('.dash-card').forEach(card => {
+          card.addEventListener('click', () => {
+            const sid = card.dataset.sid;
+            document.getElementById('sweep-list').value = sid;
+            dash.style.display = 'none';
+            loadSweep(sid);
+          });
+        });
+      } catch {
+        dash.style.display = 'none';
+      }
     }
 
     async function loadSweep(sweepId) {
@@ -422,11 +563,15 @@
         document.getElementById('current-sweep-id').textContent = sweepId;
         document.getElementById('section-sweep').style.display = 'block';
         document.getElementById('btn-delete-sweep').style.display = 'inline-flex';
+        document.getElementById('btn-clone-sweep').style.display = 'inline-flex';
         const total = data.total_count || 0;
         const completed = data.completed_count || 0;
         const review = data.review_count || 0;
+        const failed = (data.rows || []).filter(r => r.status === 'failed').length;
+        const succeeded = completed - failed;
         const pending = total - completed - review;
-        document.getElementById('stat-ran').textContent = completed;
+        document.getElementById('stat-ran').textContent = succeeded;
+        document.getElementById('stat-failed').textContent = failed;
         document.getElementById('stat-review').textContent = review;
         document.getElementById('stat-pending').textContent = pending;
         const pct = total ? Math.round(completed / total * 100) : 0;
@@ -452,41 +597,6 @@
       });
     }
 
-    function renderTable() {
-      const filtered = filterRows();
-      const cols = ['index', 'hash', 'status', ...currentColumns];
-      const thead = '<tr><th style="width: 40px;"><input type="checkbox" id="select-all" /></th>' +
-        cols.map(c => `<th>${c === 'hash' ? 'Run ID' : c === 'index' ? '#' : c}</th>`).join('') + '</tr>';
-      const tbody = filtered.map(r => {
-        const cells = cols.map(c => {
-          let v = r[c];
-          if (c === 'hash') {
-            return `<td class="hash">${escapeHtml(String(v))}</td>`;
-          }
-          if (c === 'status') {
-            const badgeClass = v === 'ran' ? 'badge-success' : v === 'review' ? 'badge-warning' : 'badge-danger';
-            const label = v === 'ran' ? 'Ran' : v === 'review' ? 'In Review' : 'Pending';
-            return `<td><span class="badge ${badgeClass}">${label}</span></td>`;
-          }
-          return `<td>${v === undefined ? '' : escapeHtml(String(v))}</td>`;
-        }).join('');
-        return `<tr class="${r.status}" data-index="${r.index}" data-hash="${r.hash}"><td><input type="checkbox" class="row-cb" /></td>${cells}</tr>`;
-      }).join('');
-      document.getElementById('table-wrap').innerHTML = '<table><thead>' + thead + '</thead><tbody>' + tbody + '</tbody></table>';
-
-      const selectAll = document.getElementById('select-all');
-      if (selectAll) {
-        selectAll.addEventListener('change', e => {
-          document.querySelectorAll('.row-cb').forEach(cb => cb.checked = e.target.checked);
-          updateSelectedRows();
-        });
-      }
-
-      document.querySelectorAll('.row-cb').forEach(cb => {
-        cb.addEventListener('change', updateSelectedRows);
-      });
-    }
-
     function updateSelectedRows() {
       document.querySelectorAll('tbody tr').forEach(tr => {
         const cb = tr.querySelector('.row-cb');
@@ -500,14 +610,25 @@
       return div.innerHTML;
     }
 
+    function formatDuration(seconds) {
+      if (seconds < 60) return seconds.toFixed(1) + 's';
+      if (seconds < 3600) return Math.floor(seconds / 60) + 'm ' + Math.round(seconds % 60) + 's';
+      const h = Math.floor(seconds / 3600);
+      const m = Math.round((seconds % 3600) / 60);
+      return h + 'h ' + m + 'm';
+    }
+
     document.getElementById('sweep-list').addEventListener('change', async e => {
       const v = e.target.value;
       if (!v) {
         document.getElementById('section-sweep').style.display = 'none';
         document.getElementById('btn-delete-sweep').style.display = 'none';
+        document.getElementById('btn-clone-sweep').style.display = 'none';
         currentSweepId = null;
+        loadDashboard();
         return;
       }
+      document.getElementById('section-dashboard').style.display = 'none';
       await loadSweep(v);
     });
 
@@ -710,6 +831,149 @@
         showMsg('sweep-msg', err.message, true);
       }
     });
+
+    document.getElementById('btn-clone-sweep').addEventListener('click', async () => {
+      if (!currentSweepId) return;
+      const newId = prompt('New sweep ID for clone of "' + currentSweepId + '":');
+      if (!newId || !newId.trim()) return;
+      try {
+        await fetchJson('/api/sweeps/' + encodeURIComponent(currentSweepId) + '/clone', {
+          method: 'POST',
+          body: JSON.stringify({ new_sweep_id: newId.trim() })
+        });
+        showMsg('sweep-msg', 'Cloned to ' + newId.trim(), false);
+        await loadSweepList();
+        document.getElementById('sweep-list').value = newId.trim();
+        await loadSweep(newId.trim());
+      } catch (err) {
+        showMsg('sweep-msg', err.message, true);
+      }
+    });
+
+    // --- Dark mode ---
+    function initTheme() {
+      const saved = localStorage.getItem('sweepd-theme');
+      if (saved) {
+        document.documentElement.setAttribute('data-theme', saved);
+      } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+      updateThemeIcon();
+    }
+    function updateThemeIcon() {
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      document.getElementById('theme-toggle').textContent = isDark ? '☀️' : '🌙';
+    }
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      const next = isDark ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('sweepd-theme', next);
+      updateThemeIcon();
+    });
+    initTheme();
+
+    // --- Auto-refresh ---
+    let autoRefreshInterval = null;
+    document.getElementById('auto-refresh-toggle').addEventListener('change', e => {
+      if (e.target.checked) {
+        autoRefreshInterval = setInterval(async () => {
+          if (currentSweepId) {
+            const selectedHashes = new Set(
+              Array.from(document.querySelectorAll('tbody tr.selected')).map(tr => tr.dataset.hash)
+            );
+            await loadSweep(currentSweepId);
+            if (selectedHashes.size > 0) {
+              document.querySelectorAll('tbody tr').forEach(tr => {
+                if (selectedHashes.has(tr.dataset.hash)) {
+                  const cb = tr.querySelector('.row-cb');
+                  if (cb) cb.checked = true;
+                  tr.classList.add('selected');
+                }
+              });
+            }
+          }
+        }, 5000);
+      } else {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+      }
+    });
+
+    // --- Column sorting ---
+    let sortState = { column: null, ascending: true };
+
+    function renderTable() {
+      let filtered = filterRows();
+      // Apply sort
+      if (sortState.column) {
+        const col = sortState.column;
+        const dir = sortState.ascending ? 1 : -1;
+        filtered.sort((a, b) => {
+          let va = a[col], vb = b[col];
+          if (va === undefined) va = '';
+          if (vb === undefined) vb = '';
+          // Try numeric comparison
+          const na = Number(va), nb = Number(vb);
+          if (!isNaN(na) && !isNaN(nb)) return (na - nb) * dir;
+          return String(va).localeCompare(String(vb)) * dir;
+        });
+      }
+      const hasDuration = filtered.some(r => r.duration != null);
+      const cols = ['index', 'hash', 'status', ...(hasDuration ? ['duration'] : []), ...currentColumns];
+      const thead = '<tr><th style="width: 40px;"><input type="checkbox" id="select-all" /></th>' +
+        cols.map(c => {
+          const label = c === 'hash' ? 'Run ID' : c === 'index' ? '#' : c === 'duration' ? 'Duration' : c;
+          const isSorted = sortState.column === c;
+          const arrow = isSorted ? (sortState.ascending ? '▲' : '▼') : '▲';
+          const arrowClass = isSorted ? 'sort-arrow active' : 'sort-arrow';
+          return `<th class="sortable" data-col="${c}">${label}<span class="${arrowClass}">${arrow}</span></th>`;
+        }).join('') + '</tr>';
+      const tbody = filtered.map(r => {
+        const cells = cols.map(c => {
+          let v = r[c];
+          if (c === 'hash') {
+            return `<td class="hash">${escapeHtml(String(v))}</td>`;
+          }
+          if (c === 'status') {
+            const badgeClass = v === 'ran' ? 'badge-success' : v === 'failed' ? 'badge-danger' : v === 'review' ? 'badge-warning' : 'badge-muted';
+            const label = v === 'ran' ? 'Ran' : v === 'failed' ? 'Failed' : v === 'review' ? 'In Review' : 'Pending';
+            return `<td><span class="badge ${badgeClass}">${label}</span></td>`;
+          }
+          if (c === 'duration') {
+            return `<td style="font-variant-numeric:tabular-nums;">${v != null ? formatDuration(v) : ''}</td>`;
+          }
+          return `<td>${v === undefined ? '' : escapeHtml(String(v))}</td>`;
+        }).join('');
+        return `<tr class="${r.status}" data-index="${r.index}" data-hash="${r.hash}"><td><input type="checkbox" class="row-cb" /></td>${cells}</tr>`;
+      }).join('');
+      document.getElementById('table-wrap').innerHTML = '<table><thead>' + thead + '</thead><tbody>' + tbody + '</tbody></table>';
+
+      const selectAll = document.getElementById('select-all');
+      if (selectAll) {
+        selectAll.addEventListener('change', e => {
+          document.querySelectorAll('.row-cb').forEach(cb => cb.checked = e.target.checked);
+          updateSelectedRows();
+        });
+      }
+      document.querySelectorAll('.row-cb').forEach(cb => {
+        cb.addEventListener('change', updateSelectedRows);
+      });
+
+      // Sort click handlers
+      document.querySelectorAll('th.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+          const col = th.dataset.col;
+          if (sortState.column === col) {
+            sortState.ascending = !sortState.ascending;
+          } else {
+            sortState.column = col;
+            sortState.ascending = true;
+          }
+          renderTable();
+        });
+      });
+    }
 
     loadSweepList();
   </script>

@@ -2,20 +2,26 @@
 """
 GPU checking and daemon loop for sweep manager.
 """
+import logging
 import subprocess
 import sys
 import time
+
+logger = logging.getLogger(__name__)
 
 from sweep.core import (
     claim_next_run,
     execute_run,
     get_sweep_config,
     list_sweep_ids,
+    record_exit_code,
+    record_run_end,
+    record_run_start,
     run_hash,
 )
 
 
-def is_gpu_free(gpu_id=0, vram_threshold_mb=1000):
+def is_gpu_free(gpu_id: int = 0, vram_threshold_mb: int = 1000) -> bool | None:
     """
     Check whether a GPU has less than vram_threshold_mb MB of VRAM in use.
 
@@ -37,7 +43,7 @@ def is_gpu_free(gpu_id=0, vram_threshold_mb=1000):
         return None
 
 
-def sweep_daemon(sweep_ids, interval=30, gpu_id=0, cpu_mode=False, vram_threshold_mb=1000):
+def sweep_daemon(sweep_ids: list[str], interval: int = 30, gpu_id: int = 0, cpu_mode: bool = False, vram_threshold_mb: int = 1000) -> None:
     """
     Daemon loop: run all pending work across given sweeps (or all sweeps if empty),
     then poll every `interval` seconds for new work.
@@ -51,17 +57,16 @@ def sweep_daemon(sweep_ids, interval=30, gpu_id=0, cpu_mode=False, vram_threshol
     if not cpu_mode:
         gpu_status = is_gpu_free(gpu_id, vram_threshold_mb)
         if gpu_status is None:
-            print("nvidia-smi not available or GPU not detected; running without GPU check.")
+            logger.info("nvidia-smi not available or GPU not detected; running without GPU check.")
             cpu_mode = True
         else:
-            print(f"GPU {gpu_id} check enabled (threshold: {vram_threshold_mb} MB VRAM).")
+            logger.info("GPU %d check enabled (threshold: %d MB VRAM).", gpu_id, vram_threshold_mb)
 
-    print(f"Daemon started. Poll interval: {interval}s.")
+    logger.info("Daemon started. Poll interval: %ds.", interval)
     if specific_ids:
-        print(f"Watching sweep(s): {', '.join(specific_ids)}")
+        logger.info("Watching sweep(s): %s", ", ".join(specific_ids))
     else:
-        print("Watching all sweeps.")
-    sys.stdout.flush()
+        logger.info("Watching all sweeps.")
 
     while True:
         ids = specific_ids if specific_ids is not None else list_sweep_ids()
@@ -77,29 +82,27 @@ def sweep_daemon(sweep_ids, interval=30, gpu_id=0, cpu_mode=False, vram_threshol
                 if not cpu_mode:
                     free = is_gpu_free(gpu_id, vram_threshold_mb)
                     if free is False:
-                        print(f"GPU {gpu_id} busy (>= {vram_threshold_mb} MB VRAM used). Waiting {interval}s...")
-                        sys.stdout.flush()
+                        logger.info("GPU %d busy (>= %d MB VRAM used). Waiting %ds...", gpu_id, vram_threshold_mb, interval)
                         time.sleep(interval)
                         continue
-                    # free is None means check failed; proceed anyway
 
                 param_line = claim_next_run(sweep_id)
                 if param_line is None:
-                    break  # no more pending work in this sweep
+                    break
 
                 found_work = True
                 h = run_hash(param_line)
-                print(f"\n[daemon] Sweep '{sweep_id}' [{h}] {param_line}")
-                sys.stdout.flush()
+                logger.info("[daemon] Sweep '%s' [%s] %s", sweep_id, h, param_line)
 
+                record_run_start(sweep_id, h)
                 exit_code = execute_run(command, param_line)
+                record_run_end(sweep_id, h, exit_code)
+                record_exit_code(sweep_id, h, exit_code)
                 if exit_code == 0:
-                    print("[daemon] Run completed successfully.")
+                    logger.info("[daemon] Run completed successfully.")
                 else:
-                    print(f"[daemon] Run failed with exit code {exit_code}.")
-                sys.stdout.flush()
+                    logger.warning("[daemon] Run failed with exit code %d.", exit_code)
 
         if not found_work:
-            print(f"No pending work. Sleeping {interval}s...")
-            sys.stdout.flush()
+            logger.debug("No pending work. Sleeping %ds...", interval)
             time.sleep(interval)

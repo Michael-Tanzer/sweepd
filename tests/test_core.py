@@ -8,43 +8,6 @@ import tempfile
 import pytest
 
 
-@pytest.fixture
-def sweep_dir(tmp_path):
-    """Override path helpers to use tmp_path for the duration of the test."""
-    import sweep as mod
-    import sweep.core as core
-    base = str(tmp_path)
-    attrs = [
-        "get_sweep_dir", "get_configs_dir", "get_ran_dir", "get_review_dir",
-        "_meta_path", "_runs_path", "_ran_path", "_review_path",
-        "_legacy_sweep_path", "_legacy_ran_path",
-    ]
-    orig_mod = {k: getattr(mod, k) for k in attrs}
-    orig_core = {k: getattr(core, k) for k in attrs}
-    patches = {
-        "get_sweep_dir": lambda: base,
-        "get_configs_dir": lambda: os.path.join(base, "configs"),
-        "get_ran_dir": lambda: os.path.join(base, "ran"),
-        "get_review_dir": lambda: os.path.join(base, "review"),
-        "_meta_path": lambda sid: os.path.join(base, "configs", f"{sid}.meta.toml"),
-        "_runs_path": lambda sid: os.path.join(base, "configs", f"{sid}.runs.txt"),
-        "_ran_path": lambda sid: os.path.join(base, "ran", f"{sid}.txt"),
-        "_review_path": lambda sid: os.path.join(base, "review", f"{sid}.txt"),
-        "_legacy_sweep_path": lambda sid: os.path.join(base, f"{sid}.txt"),
-        "_legacy_ran_path": lambda sid: os.path.join(base, f"{sid}_ran.txt"),
-    }
-    for k, v in patches.items():
-        setattr(mod, k, v)
-        setattr(core, k, v)
-    try:
-        yield tmp_path
-    finally:
-        for k, v in orig_mod.items():
-            setattr(mod, k, v)
-        for k, v in orig_core.items():
-            setattr(core, k, v)
-
-
 def test_run_hash_order_independent():
     """Order-independent hash: a=1,b=2 and b=2,a=1 yield same hash."""
     from sweep import run_hash
@@ -300,26 +263,58 @@ def test_list_sweep_ids_includes_legacy(sweep_dir):
 def test_save_meta_creates_valid_toml(sweep_dir):
     """save_meta writes TOML that can be read back by _load_meta."""
     import sweep as mod
+    from sweep.core import _load_meta
     os.makedirs(sweep_dir / "configs", exist_ok=True)
     mod.save_meta("t", ["uv", "run", "python", "t.py"])
-    cmd = mod._load_meta("t")
+    cmd = _load_meta("t")
     assert cmd == ["uv", "run", "python", "t.py"]
 
 
 def test_load_legacy_sweep_invalid_first_line(sweep_dir):
     """_load_legacy_sweep raises ValueError when first line has fewer than 2 parts."""
-    import sweep as mod
+    from sweep.core import _load_legacy_sweep
     (sweep_dir / "bad.txt").write_text("only_one_token\na=1\n")
     with pytest.raises(ValueError, match="First line must be"):
-        mod._load_legacy_sweep("bad")
+        _load_legacy_sweep("bad")
 
 
 def test_load_legacy_sweep_too_few_lines(sweep_dir):
     """_load_legacy_sweep raises ValueError when file has fewer than 2 lines."""
-    import sweep as mod
+    from sweep.core import _load_legacy_sweep
     (sweep_dir / "short.txt").write_text("python x.py\n")
     with pytest.raises(ValueError, match="at least 2 lines"):
-        mod._load_legacy_sweep("short")
+        _load_legacy_sweep("short")
+
+
+def test_execute_run_logs_command(monkeypatch, caplog):
+    """execute_run logs the command being executed at INFO level."""
+    import logging
+    from sweep import execute_run
+    def fake_run(cmd, **kwargs):
+        return type("R", (), {"returncode": 0})()
+    monkeypatch.setattr("sweep.core.subprocess.run", fake_run)
+    with caplog.at_level(logging.INFO, logger="sweep.core"):
+        execute_run(["python", "train.py"], "lr=0.01,batch_size=8")
+    assert any("Executing" in r.message for r in caplog.records)
+
+
+def test_sweep_run_logs_progress(sweep_dir, monkeypatch, caplog):
+    """sweep_run logs sweep info and progress at INFO level."""
+    import logging
+    import sweep as mod
+    import sweep.core as core
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    mod.save_meta("logtest", ["python", "x.py"])
+    mod.save_runs("logtest", ["a=1"])
+    def fake_execute(cmd, line):
+        return 0
+    monkeypatch.setattr(mod, "execute_run", fake_execute)
+    monkeypatch.setattr(core, "execute_run", fake_execute)
+    with caplog.at_level(logging.INFO, logger="sweep.core"):
+        mod.sweep_run("logtest")
+    messages = " ".join(r.message for r in caplog.records)
+    assert "logtest" in messages
+    assert "All runs completed" in messages
 
 
 def test_execute_run_builds_correct_command(monkeypatch):
@@ -468,3 +463,163 @@ def test_append_runs_as_review(sweep_dir):
     # claim_next_run should return None (both runs are in review)
     result = mod.claim_next_run("rv4")
     assert result is None
+
+
+# --- Exit code tracking tests ---
+
+def test_get_completed_exit_codes(sweep_dir):
+    """get_completed_exit_codes reads hash -> exit_code from ran file."""
+    from sweep.core import get_completed_exit_codes, run_hash
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
+    h1 = run_hash("a=1")
+    h2 = run_hash("a=2")
+    h3 = run_hash("a=3")
+    (sweep_dir / "ran" / "ec.txt").write_text(
+        f"{h1}\ta=1\t0\n{h2}\ta=2\t1\n{h3}\ta=3\n"
+    )
+    codes = get_completed_exit_codes("ec")
+    assert codes[h1] == 0
+    assert codes[h2] == 1
+    assert h3 not in codes  # no exit code column = unknown
+
+
+def test_sweep_run_records_exit_code(sweep_dir, monkeypatch):
+    """sweep_run stores exit code in the ran file."""
+    import sweep as mod
+    import sweep.core as core
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    mod.save_meta("ecrun", ["python", "x.py"])
+    mod.save_runs("ecrun", ["a=1", "a=2"])
+    call_count = [0]
+    def fake_execute(cmd, line):
+        call_count[0] += 1
+        return 0 if call_count[0] == 1 else 1
+    monkeypatch.setattr(mod, "execute_run", fake_execute)
+    monkeypatch.setattr(core, "execute_run", fake_execute)
+    mod.sweep_run("ecrun")
+    from sweep.core import get_completed_exit_codes
+    codes = get_completed_exit_codes("ecrun")
+    h1 = mod.run_hash("a=1")
+    h2 = mod.run_hash("a=2")
+    assert codes[h1] == 0
+    assert codes[h2] == 1
+
+
+# --- Run timing tests ---
+
+def test_record_and_get_run_timings(sweep_dir):
+    """record_run_start + record_run_end creates timing entry; get_run_timings reads it."""
+    from sweep.core import record_run_start, record_run_end, get_run_timings, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    record_run_start("t1", h)
+    record_run_end("t1", h, exit_code=0)
+    timings = get_run_timings("t1")
+    assert h in timings
+    assert timings[h]["exit_code"] == 0
+    assert timings[h]["start"] is not None
+    assert timings[h]["end"] is not None
+    assert timings[h]["end"] >= timings[h]["start"]
+
+
+def test_get_run_timings_empty(sweep_dir):
+    """get_run_timings returns empty dict when no timing file exists."""
+    from sweep.core import get_run_timings
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    assert get_run_timings("nonexistent") == {}
+
+
+def test_run_timings_rerun_clears_stale(sweep_dir):
+    """A rerun (new start without end yet) clears stale timing from the first execution."""
+    from sweep.core import record_run_start, record_run_end, get_run_timings, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    # First execution: start + end
+    record_run_start("tr", h)
+    record_run_end("tr", h, exit_code=1)
+    # Rerun: only start so far (still in progress)
+    record_run_start("tr", h)
+    timings = get_run_timings("tr")
+    # Should NOT return stale first-execution result
+    assert h not in timings
+
+
+def test_run_timings_rerun_returns_latest(sweep_dir):
+    """After a rerun completes, get_run_timings returns the latest execution's data."""
+    from sweep.core import record_run_start, record_run_end, get_run_timings, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    # First execution
+    record_run_start("tr2", h)
+    record_run_end("tr2", h, exit_code=1)
+    # Second execution
+    record_run_start("tr2", h)
+    record_run_end("tr2", h, exit_code=0)
+    timings = get_run_timings("tr2")
+    assert timings[h]["exit_code"] == 0
+
+
+def test_run_timings_multiple_runs(sweep_dir):
+    """Multiple runs each get their own timing entries."""
+    from sweep.core import record_run_start, record_run_end, get_run_timings, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h1 = run_hash("x=1")
+    h2 = run_hash("x=2")
+    record_run_start("t2", h1)
+    record_run_end("t2", h1, exit_code=0)
+    record_run_start("t2", h2)
+    record_run_end("t2", h2, exit_code=1)
+    timings = get_run_timings("t2")
+    assert len(timings) == 2
+    assert timings[h1]["exit_code"] == 0
+    assert timings[h2]["exit_code"] == 1
+
+
+def test_sweep_run_records_timing(sweep_dir, monkeypatch):
+    """sweep_run records start/end timing for each run."""
+    import sweep as mod
+    import sweep.core as core
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    mod.save_meta("trun", ["python", "x.py"])
+    mod.save_runs("trun", ["a=1"])
+    def fake_execute(cmd, line):
+        return 0
+    monkeypatch.setattr(mod, "execute_run", fake_execute)
+    monkeypatch.setattr(core, "execute_run", fake_execute)
+    mod.sweep_run("trun")
+    timings = core.get_run_timings("trun")
+    h = mod.run_hash("a=1")
+    assert h in timings
+    assert timings[h]["exit_code"] == 0
+    assert timings[h]["end"] >= timings[h]["start"]
+
+
+# --- Sweep cloning tests ---
+
+def test_clone_sweep(sweep_dir):
+    """clone_sweep copies meta and runs but not ran/review/timing."""
+    import sweep as mod
+    from sweep.core import clone_sweep
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
+    mod.save_meta("src", ["python", "train.py"])
+    mod.save_runs("src", ["lr=0.01", "lr=0.001"])
+    # Mark one as ran
+    h = mod.run_hash("lr=0.01")
+    (sweep_dir / "ran" / "src.txt").write_text(f"{h}\tlr=0.01\n")
+    clone_sweep("src", "dst")
+    # New sweep has same command and runs
+    cmd, lines = mod.get_sweep_config("dst")
+    assert cmd == ["python", "train.py"]
+    assert lines == ["lr=0.01", "lr=0.001"]
+    # No ran history
+    assert mod.get_completed_hashes("dst") == set()
+
+
+def test_clone_sweep_source_not_found(sweep_dir):
+    """clone_sweep raises FileNotFoundError for missing source."""
+    from sweep.core import clone_sweep
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    with pytest.raises(FileNotFoundError):
+        clone_sweep("missing", "dst")

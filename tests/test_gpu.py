@@ -71,59 +71,43 @@ def test_is_gpu_free_timeout(monkeypatch):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def sweep_dir_gpu(tmp_path):
+def sweep_dir_gpu(sweep_dir):
+    """Alias for sweep_dir that also works for GPU daemon tests.
+
+    The gpu module imports core functions directly, so patching core
+    (done by sweep_dir) is sufficient since gpu.claim_next_run etc.
+    are references to the same core function objects.
     """
-    Patch sweep, sweep.core, and sweep.gpu module namespaces so all path-dependent
-    calls use tmp_path. Also patches sweep.gpu's imported references to core functions.
-    """
+    return sweep_dir
+
+
+def test_sweep_daemon_logs_startup(sweep_dir_gpu, monkeypatch, caplog):
+    """sweep_daemon logs startup messages at INFO level."""
+    import logging
     import sweep as mod
-    import sweep.core as core
     import sweep.gpu as gpu
 
-    base = str(tmp_path)
-    attrs = [
-        "get_sweep_dir", "get_configs_dir", "get_ran_dir", "get_review_dir",
-        "_meta_path", "_runs_path", "_ran_path", "_review_path",
-        "_legacy_sweep_path", "_legacy_ran_path",
-    ]
-    orig_mod = {k: getattr(mod, k) for k in attrs}
-    orig_core = {k: getattr(core, k) for k in attrs}
-    orig_gpu = {k: getattr(gpu, k) for k in attrs if hasattr(gpu, k)}
+    os.makedirs(sweep_dir_gpu / "configs", exist_ok=True)
+    os.makedirs(sweep_dir_gpu / "ran", exist_ok=True)
+    mod.save_meta("dlog", ["python", "x.py"])
+    mod.save_runs("dlog", [])
 
-    patches = {
-        "get_sweep_dir": lambda: base,
-        "get_configs_dir": lambda: os.path.join(base, "configs"),
-        "get_ran_dir": lambda: os.path.join(base, "ran"),
-        "get_review_dir": lambda: os.path.join(base, "review"),
-        "_meta_path": lambda sid: os.path.join(base, "configs", f"{sid}.meta.toml"),
-        "_runs_path": lambda sid: os.path.join(base, "configs", f"{sid}.runs.txt"),
-        "_ran_path": lambda sid: os.path.join(base, "ran", f"{sid}.txt"),
-        "_review_path": lambda sid: os.path.join(base, "review", f"{sid}.txt"),
-        "_legacy_sweep_path": lambda sid: os.path.join(base, f"{sid}.txt"),
-        "_legacy_ran_path": lambda sid: os.path.join(base, f"{sid}_ran.txt"),
-    }
+    def fake_execute(cmd, param_line):
+        return 0
 
-    for k, v in patches.items():
-        setattr(mod, k, v)
-        setattr(core, k, v)
-        if hasattr(gpu, k):
-            setattr(gpu, k, v)
+    monkeypatch.setattr(gpu, "execute_run", fake_execute)
 
-    # Also patch gpu module's imported references to core functions
-    gpu_core_attrs = ["claim_next_run", "execute_run", "get_sweep_config", "list_sweep_ids", "run_hash"]
-    orig_gpu_core = {k: getattr(gpu, k) for k in gpu_core_attrs}
+    sleep_calls = []
+    def fake_sleep(secs):
+        sleep_calls.append(secs)
+        raise StopIteration("done")
+    monkeypatch.setattr(gpu, "time", type("T", (), {"sleep": staticmethod(fake_sleep)})())
 
-    try:
-        yield tmp_path
-    finally:
-        for k, v in orig_mod.items():
-            setattr(mod, k, v)
-        for k, v in orig_core.items():
-            setattr(core, k, v)
-        for k, v in orig_gpu.items():
-            setattr(gpu, k, v)
-        for k, v in orig_gpu_core.items():
-            setattr(gpu, k, v)
+    with caplog.at_level(logging.INFO, logger="sweep.gpu"):
+        with pytest.raises(StopIteration):
+            gpu.sweep_daemon(["dlog"], interval=1, cpu_mode=True)
+    messages = " ".join(r.message for r in caplog.records)
+    assert "Daemon started" in messages
 
 
 def test_sweep_daemon_cpu_mode_runs_all_claims_then_exits(sweep_dir_gpu, monkeypatch):

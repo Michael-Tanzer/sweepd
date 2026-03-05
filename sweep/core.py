@@ -6,11 +6,15 @@ Uses ~/.sweepd/configs/<sweep_id>.meta.toml, configs/<sweep_id>.runs.txt, and
 ~/.sweepd/ran/<sweep_id>.txt (hash+run per line). Supports legacy flat .txt during transition.
 """
 import hashlib
+import logging
 import os
 import sys
 import subprocess
 import time
 import tomllib
+from typing import IO
+
+logger = logging.getLogger(__name__)
 
 try:
     import tomli_w
@@ -33,35 +37,42 @@ RUN_HASH_LEN = 6
 RAN_SEP = "\t"
 
 
-def get_sweep_dir():
+def get_sweep_dir() -> str:
     """
     Returns expanded ~/.sweeps directory path (cross-platform).
     """
     return os.path.expanduser("~/.sweepd")
 
 
-def get_configs_dir():
+def get_configs_dir() -> str:
     """
     Returns ~/.sweeps/configs directory path.
     """
     return os.path.join(get_sweep_dir(), "configs")
 
 
-def get_ran_dir():
+def get_ran_dir() -> str:
     """
     Returns ~/.sweeps/ran directory path.
     """
     return os.path.join(get_sweep_dir(), "ran")
 
 
-def get_review_dir():
+def get_review_dir() -> str:
     """
     Returns ~/.sweepd/review directory path (for runs staged as 'in review').
     """
     return os.path.join(get_sweep_dir(), "review")
 
 
-def split_param_line(param_line):
+def get_timing_dir() -> str:
+    """
+    Returns ~/.sweepd/timing directory path (for run start/end timestamps).
+    """
+    return os.path.join(get_sweep_dir(), "timing")
+
+
+def split_param_line(param_line: str) -> list[str]:
     """
     Splits a param line on commas that are not inside single or double quotes.
     Returns a list of segments (not stripped).
@@ -87,7 +98,7 @@ def split_param_line(param_line):
     return segments
 
 
-def param_line_to_dict(param_line):
+def param_line_to_dict(param_line: str) -> dict[str, str]:
     """
     Parses a param line (key=val,key2=val2) into a dict. Used for table UI (one key per column).
     """
@@ -104,7 +115,7 @@ def param_line_to_dict(param_line):
     return out
 
 
-def _canonical_param_line(param_line):
+def _canonical_param_line(param_line: str) -> str:
     """
     Normalize param line to key-sorted form for order-independent hashing.
     Parses key=value pairs (comma-separated), sorts by key, rejoins.
@@ -121,7 +132,7 @@ def _canonical_param_line(param_line):
     return ",".join(f"{k}={v}" if v else k for k, v in pairs)
 
 
-def run_hash(param_line):
+def run_hash(param_line: str) -> str:
     """
     Returns 6-char hex hash of param line (order-independent: canonicalizes before hashing).
     """
@@ -129,37 +140,42 @@ def run_hash(param_line):
     return hashlib.sha256(canonical.encode()).hexdigest()[:RUN_HASH_LEN]
 
 
-def _meta_path(sweep_id):
+def _meta_path(sweep_id: str) -> str:
     """Path to configs/<sweep_id>.meta.toml."""
     return os.path.join(get_configs_dir(), f"{sweep_id}.meta.toml")
 
 
-def _runs_path(sweep_id):
+def _runs_path(sweep_id: str) -> str:
     """Path to configs/<sweep_id>.runs.txt."""
     return os.path.join(get_configs_dir(), f"{sweep_id}.runs.txt")
 
 
-def _ran_path(sweep_id):
+def _ran_path(sweep_id: str) -> str:
     """Path to ran/<sweep_id>.txt."""
     return os.path.join(get_ran_dir(), f"{sweep_id}.txt")
 
 
-def _review_path(sweep_id):
+def _review_path(sweep_id: str) -> str:
     """Path to review/<sweep_id>.txt."""
     return os.path.join(get_review_dir(), f"{sweep_id}.txt")
 
 
-def _legacy_sweep_path(sweep_id):
+def _timing_path(sweep_id: str) -> str:
+    """Path to timing/<sweep_id>.jsonl."""
+    return os.path.join(get_timing_dir(), f"{sweep_id}.jsonl")
+
+
+def _legacy_sweep_path(sweep_id: str) -> str:
     """Path to legacy ~/.sweeps/<sweep_id>.txt."""
     return os.path.join(get_sweep_dir(), f"{sweep_id}.txt")
 
 
-def _legacy_ran_path(sweep_id):
+def _legacy_ran_path(sweep_id: str) -> str:
     """Path to legacy ~/.sweeps/<sweep_id>_ran.txt."""
     return os.path.join(get_sweep_dir(), f"{sweep_id}_ran.txt")
 
 
-def _load_meta(sweep_id):
+def _load_meta(sweep_id: str) -> list[str]:
     """Load meta.toml; returns list 'command'. Raises if missing or invalid."""
     path = _meta_path(sweep_id)
     with open(path, "rb") as f:
@@ -170,14 +186,14 @@ def _load_meta(sweep_id):
     return [str(x) for x in cmd]
 
 
-def _load_runs(sweep_id):
+def _load_runs(sweep_id: str) -> list[str]:
     """Load runs.txt; returns list of param lines (non-empty)."""
     path = _runs_path(sweep_id)
     with open(path, "r") as f:
         return [line.strip() for line in f.readlines() if line.strip()]
 
 
-def _load_legacy_sweep(sweep_id):
+def _load_legacy_sweep(sweep_id: str) -> tuple[list[str], list[str]]:
     """Load legacy sweep file; returns (command, param_lines). command = [python_exec, script_path]."""
     path = _legacy_sweep_path(sweep_id)
     with open(path, "r") as f:
@@ -192,7 +208,7 @@ def _load_legacy_sweep(sweep_id):
     return command, param_lines
 
 
-def get_sweep_config(sweep_id):
+def get_sweep_config(sweep_id: str) -> tuple[list[str], list[str]]:
     """
     Reads sweep config (new layout or legacy), returns (command, param_lines).
 
@@ -211,7 +227,7 @@ def get_sweep_config(sweep_id):
     raise FileNotFoundError(f"Sweep not found: {sweep_id} (no {meta_path} or legacy .txt)")
 
 
-def get_completed_hashes(sweep_id):
+def get_completed_hashes(sweep_id: str) -> set[str]:
     """
     Returns set of completed run hashes (6-char) for the sweep.
 
@@ -238,7 +254,117 @@ def get_completed_hashes(sweep_id):
     return set()
 
 
-def get_review_hashes(sweep_id):
+def get_completed_exit_codes(sweep_id: str) -> dict[str, int]:
+    """
+    Returns dict mapping run hash -> exit code for completed runs that have exit codes recorded.
+
+    Reads ran/<sweep_id>.txt (lines: hash\\tparam_line\\texit_code). Lines without
+    a third field are omitted (backwards-compatible with old format).
+    """
+    ran_path = _ran_path(sweep_id)
+    if not os.path.exists(ran_path):
+        return {}
+    codes: dict[str, int] = {}
+    with open(ran_path, "r") as f:
+        for line in f:
+            line = line.rstrip("\n\r")
+            if not line:
+                continue
+            parts = line.split(RAN_SEP)
+            if len(parts) >= 3:
+                h = parts[0].strip()[:RUN_HASH_LEN]
+                try:
+                    codes[h] = int(parts[2].strip())
+                except ValueError:
+                    pass
+    return codes
+
+
+def record_exit_code(sweep_id: str, run_hash_str: str, exit_code: int) -> None:
+    """
+    Updates the ran file to record exit code for a completed run.
+
+    Rewrites the matching line from 'hash\\tparam_line' to 'hash\\tparam_line\\texit_code'.
+    """
+    ran_path = _ran_path(sweep_id)
+    if not os.path.exists(ran_path):
+        return
+    with open(ran_path, "r") as f:
+        lines = f.readlines()
+    updated = []
+    for line in lines:
+        stripped = line.rstrip("\n\r")
+        if not stripped:
+            continue
+        parts = stripped.split(RAN_SEP)
+        h = parts[0].strip()[:RUN_HASH_LEN]
+        if h == run_hash_str and len(parts) == 2:
+            updated.append(f"{stripped}{RAN_SEP}{exit_code}")
+        else:
+            updated.append(stripped)
+    with open(ran_path, "w") as f:
+        for line in updated:
+            f.write(line + "\n")
+
+
+def record_run_start(sweep_id: str, run_hash_str: str) -> None:
+    """Append a timing start entry (JSONL) to timing/<sweep_id>.jsonl."""
+    import json
+    path = _timing_path(sweep_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    entry = {"hash": run_hash_str, "event": "start", "time": time.time()}
+    with open(path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def record_run_end(sweep_id: str, run_hash_str: str, exit_code: int) -> None:
+    """Append a timing end entry (JSONL) to timing/<sweep_id>.jsonl."""
+    import json
+    path = _timing_path(sweep_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    entry = {"hash": run_hash_str, "event": "end", "time": time.time(), "exit_code": exit_code}
+    with open(path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def get_run_timings(sweep_id: str) -> dict[str, dict]:
+    """Read timing JSONL and return dict mapping hash -> {start, end, exit_code, duration}.
+
+    Uses the last start/end pair for each hash (in case of reruns).
+    """
+    import json
+    path = _timing_path(sweep_id)
+    if not os.path.exists(path):
+        return {}
+    starts: dict[str, float] = {}
+    results: dict[str, dict] = {}
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            h = entry.get("hash", "")
+            if entry.get("event") == "start":
+                starts[h] = entry["time"]
+                results.pop(h, None)
+            elif entry.get("event") == "end":
+                start_time = starts.get(h)
+                end_time = entry["time"]
+                duration = (end_time - start_time) if start_time is not None else None
+                results[h] = {
+                    "start": start_time,
+                    "end": end_time,
+                    "duration": duration,
+                    "exit_code": entry.get("exit_code"),
+                }
+    return results
+
+
+def get_review_hashes(sweep_id: str) -> set[str]:
     """
     Returns set of run hashes currently staged as 'in review' for the sweep.
 
@@ -261,7 +387,7 @@ def get_review_hashes(sweep_id):
         return out
 
 
-def lock_file(file_handle):
+def lock_file(file_handle: IO) -> None:
     """
     Lock file handle for exclusive access (cross-platform).
     """
@@ -273,7 +399,7 @@ def lock_file(file_handle):
         pass
 
 
-def unlock_file(file_handle):
+def unlock_file(file_handle: IO) -> None:
     """
     Unlock file handle (cross-platform).
     """
@@ -288,7 +414,7 @@ def unlock_file(file_handle):
         pass
 
 
-def claim_next_run(sweep_id):
+def claim_next_run(sweep_id: str) -> str | None:
     """
     Atomically finds next unran run (by hash), appends hash\\tparam_line to ran file, returns param_line or None.
     Skips runs that are currently 'in review'.
@@ -343,60 +469,58 @@ def claim_next_run(sweep_id):
     return None
 
 
-def execute_run(command, param_line):
+def execute_run(command: list[str], param_line: str) -> int:
     """
     Runs command + Hydra overrides. command is list of args; param_line is comma-separated overrides.
     Returns exit code of the subprocess.
     """
     params = [p.strip() for p in split_param_line(param_line) if p.strip()]
     cmd = command + params
-    print(f"Executing: {' '.join(cmd)}")
-    sys.stdout.flush()
-    sys.stderr.flush()
+    logger.info("Executing: %s", " ".join(cmd))
     result = subprocess.run(cmd, stdout=None, stderr=None)
     return result.returncode
 
 
-def sweep_run(sweep_id):
+def sweep_run(sweep_id: str) -> None:
     """
-    Main sweep loop: claim and execute runs until all done. Prints Run i/N progress.
+    Main sweep loop: claim and execute runs until all done. Logs Run i/N progress.
     """
     try:
         command, param_lines = get_sweep_config(sweep_id)
     except Exception as e:
-        print(f"Error reading sweep config: {e}", file=sys.stderr)
+        logger.error("Error reading sweep config: %s", e)
         sys.exit(1)
 
     completed_hashes = get_completed_hashes(sweep_id)
     total = len(param_lines)
     completed_count = len(completed_hashes)
 
-    print(f"Sweep ID: {sweep_id}")
-    print(f"Command: {' '.join(command)}")
-    print(f"Total runs: {total}")
-    print(f"Already completed: {completed_count}")
-    sys.stdout.flush()
+    logger.info("Sweep ID: %s", sweep_id)
+    logger.info("Command: %s", " ".join(command))
+    logger.info("Total runs: %d", total)
+    logger.info("Already completed: %d", completed_count)
 
     run_index = 0
     while True:
         param_line = claim_next_run(sweep_id)
         if param_line is None:
-            print("All runs completed!")
+            logger.info("All runs completed!")
             break
         run_index += 1
         h = run_hash(param_line)
-        print(f"\nRun {run_index}/{total} [{h}] {param_line}")
-        sys.stdout.flush()
+        logger.info("Run %d/%d [%s] %s", run_index, total, h, param_line)
 
+        record_run_start(sweep_id, h)
         exit_code = execute_run(command, param_line)
+        record_run_end(sweep_id, h, exit_code)
+        record_exit_code(sweep_id, h, exit_code)
         if exit_code == 0:
-            print(f"Run completed successfully")
+            logger.info("Run completed successfully")
         else:
-            print(f"Run failed with exit code {exit_code}, continuing to next run")
-        sys.stdout.flush()
+            logger.warning("Run failed with exit code %d, continuing to next run", exit_code)
 
 
-def get_default_command():
+def get_default_command() -> list[str] | None:
     """
     Returns default command list from ~/.sweeps/sweep_config.toml or config/sweep_defaults.toml if present.
     Otherwise returns None (caller must provide command).
@@ -414,7 +538,7 @@ def get_default_command():
     return None
 
 
-def save_meta(sweep_id, command):
+def save_meta(sweep_id: str, command: list[str]) -> None:
     """Writes configs/<sweep_id>.meta.toml with the given command list."""
     if tomli_w is None:
         raise RuntimeError("tomli-w is required; install with: uv add tomli-w")
@@ -423,7 +547,7 @@ def save_meta(sweep_id, command):
         tomli_w.dump({"command": command}, f)
 
 
-def get_runs(sweep_id):
+def get_runs(sweep_id: str) -> list[str]:
     """Returns list of param lines for the sweep (from runs.txt or legacy)."""
     if os.path.exists(_meta_path(sweep_id)):
         return _load_runs(sweep_id)
@@ -432,7 +556,7 @@ def get_runs(sweep_id):
     return []
 
 
-def save_runs(sweep_id, param_lines):
+def save_runs(sweep_id: str, param_lines: list[str]) -> None:
     """Overwrites configs/<sweep_id>.runs.txt with the given param lines."""
     os.makedirs(get_configs_dir(), exist_ok=True)
     with open(_runs_path(sweep_id), "w") as f:
@@ -440,7 +564,7 @@ def save_runs(sweep_id, param_lines):
             f.write(line + "\n")
 
 
-def append_runs(sweep_id, param_lines):
+def append_runs(sweep_id: str, param_lines: list[str]) -> None:
     """Appends param lines to configs/<sweep_id>.runs.txt."""
     os.makedirs(get_configs_dir(), exist_ok=True)
     with open(_runs_path(sweep_id), "a") as f:
@@ -448,7 +572,7 @@ def append_runs(sweep_id, param_lines):
             f.write(line + "\n")
 
 
-def remove_ran_lines_by_hashes(sweep_id, hashes_to_remove):
+def remove_ran_lines_by_hashes(sweep_id: str, hashes_to_remove: set[str]) -> None:
     """
     Removes from ran/<sweep_id>.txt any line whose hash (first field) is in hashes_to_remove.
     """
@@ -473,7 +597,7 @@ def remove_ran_lines_by_hashes(sweep_id, hashes_to_remove):
             f.write(line + "\n")
 
 
-def add_ran_lines_by_hashes(sweep_id, hashes_to_add):
+def add_ran_lines_by_hashes(sweep_id: str, hashes_to_add: set[str]) -> None:
     """
     Adds runs to ran/<sweep_id>.txt for the given hashes. Looks up param_line from runs.txt.
     Only adds if hash is not already in ran file. Uses file locking for atomicity.
@@ -512,7 +636,7 @@ def add_ran_lines_by_hashes(sweep_id, hashes_to_add):
             unlock_file(f)
 
 
-def add_review_lines_by_hashes(sweep_id, hashes_to_review):
+def add_review_lines_by_hashes(sweep_id: str, hashes_to_review: list[str] | set[str]) -> None:
     """
     Moves runs to the review file for the given hashes.
     These runs will be invisible to claim_next_run until promoted.
@@ -552,7 +676,7 @@ def add_review_lines_by_hashes(sweep_id, hashes_to_review):
             unlock_file(f)
 
 
-def promote_from_review(sweep_id, hashes_to_promote):
+def promote_from_review(sweep_id: str, hashes_to_promote: set[str]) -> None:
     """
     Promotes runs from 'in review' to 'pending' by removing them from the review file.
     After this, claim_next_run will pick them up.
@@ -579,7 +703,7 @@ def promote_from_review(sweep_id, hashes_to_promote):
             f.write(line + "\n")
 
 
-def append_runs_as_review(sweep_id, param_lines):
+def append_runs_as_review(sweep_id: str, param_lines: list[str]) -> None:
     """
     Appends param_lines to runs.txt AND immediately stages them in the review file.
     These runs will not be claimed until promoted via promote_from_review().
@@ -589,7 +713,14 @@ def append_runs_as_review(sweep_id, param_lines):
     add_review_lines_by_hashes(sweep_id, hashes)
 
 
-def list_sweep_ids():
+def clone_sweep(source_id: str, new_id: str) -> None:
+    """Clone a sweep: copy meta + runs to a new sweep ID (no ran/review/timing history)."""
+    command, param_lines = get_sweep_config(source_id)
+    save_meta(new_id, command)
+    save_runs(new_id, param_lines)
+
+
+def list_sweep_ids() -> list[str]:
     """
     Returns list of sweep IDs from configs/*.meta.toml and legacy ~/.sweeps/*.txt (excluding _ran.txt).
     """

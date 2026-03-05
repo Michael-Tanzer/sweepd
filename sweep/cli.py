@@ -2,12 +2,14 @@
 """
 Click CLI for the sweep manager: list, show, run, create, add-runs, mark-rerun, mark-ran, delete, export-runs, daemon, web.
 """
+import logging
 import os
 import click
 
 from sweep import (
     add_ran_lines_by_hashes,
     append_runs,
+    clone_sweep,
     get_completed_hashes,
     get_default_command,
     get_runs,
@@ -17,16 +19,14 @@ from sweep import (
     run_hash,
     save_meta,
     save_runs,
+    split_param_line,
     sweep_daemon,
     sweep_run,
-    _meta_path,
-    _ran_path,
-    _runs_path,
 )
-from sweep.core import split_param_line
+from sweep.core import _meta_path, _ran_path, _runs_path
 
 
-def _expand_grid(base_line, grid_specs):
+def _expand_grid(base_line: str, grid_specs: list[str]) -> list[str]:
     """
     Expands grid specs into param lines (cartesian product), each combined with base.
     base_line: optional single param line (e.g. "gpu=0").
@@ -67,7 +67,7 @@ def _expand_grid(base_line, grid_specs):
     return product(0, [])
 
 
-def _dedup_against_existing(existing_param_lines, new_param_lines):
+def _dedup_against_existing(existing_param_lines: list[str], new_param_lines: list[str]) -> tuple[list[str], int]:
     """
     Returns (to_add, skipped_count) where to_add are new_param_lines not already in existing (by hash).
     """
@@ -269,6 +269,19 @@ def cmd_export_runs(sweep_id):
         click.echo(line)
 
 
+@cli.command("clone")
+@click.argument("source_id")
+@click.argument("new_id")
+def cmd_clone(source_id, new_id):
+    """Clone a sweep (meta + runs) to a new ID. No ran/review history is copied."""
+    try:
+        clone_sweep(source_id, new_id)
+    except FileNotFoundError as e:
+        click.echo(str(e), err=True)
+        raise SystemExit(1)
+    click.echo(f"Cloned {source_id} -> {new_id}")
+
+
 @cli.command("daemon")
 @click.argument("sweep_id", required=False, default=None)
 @click.option("--interval", default=30, show_default=True, help="Poll interval in seconds when idle.")
@@ -296,6 +309,10 @@ def cmd_web(host, port):
 
 
 def main():
+    logging.basicConfig(
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        level=logging.INFO,
+    )
     cli()
 
 

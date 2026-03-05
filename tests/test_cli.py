@@ -11,43 +11,6 @@ from sweep.cli import cli
 
 
 @pytest.fixture
-def sweep_dir(tmp_path):
-    """Patch sweep module to use tmp_path for all sweep data."""
-    import sweep as mod
-    import sweep.core as core
-    base = str(tmp_path)
-    attrs = [
-        "get_sweep_dir", "get_configs_dir", "get_ran_dir", "get_review_dir",
-        "_meta_path", "_runs_path", "_ran_path", "_review_path",
-        "_legacy_sweep_path", "_legacy_ran_path",
-    ]
-    orig_mod = {k: getattr(mod, k) for k in attrs}
-    orig_core = {k: getattr(core, k) for k in attrs}
-    patches = {
-        "get_sweep_dir": lambda: base,
-        "get_configs_dir": lambda: os.path.join(base, "configs"),
-        "get_ran_dir": lambda: os.path.join(base, "ran"),
-        "get_review_dir": lambda: os.path.join(base, "review"),
-        "_meta_path": lambda sid: os.path.join(base, "configs", f"{sid}.meta.toml"),
-        "_runs_path": lambda sid: os.path.join(base, "configs", f"{sid}.runs.txt"),
-        "_ran_path": lambda sid: os.path.join(base, "ran", f"{sid}.txt"),
-        "_review_path": lambda sid: os.path.join(base, "review", f"{sid}.txt"),
-        "_legacy_sweep_path": lambda sid: os.path.join(base, f"{sid}.txt"),
-        "_legacy_ran_path": lambda sid: os.path.join(base, f"{sid}_ran.txt"),
-    }
-    for k, v in patches.items():
-        setattr(mod, k, v)
-        setattr(core, k, v)
-    try:
-        yield tmp_path
-    finally:
-        for k, v in orig_mod.items():
-            setattr(mod, k, v)
-        for k, v in orig_core.items():
-            setattr(core, k, v)
-
-
-@pytest.fixture
 def default_command(sweep_dir):
     """Create config/sweep_defaults.toml in cwd so create can use default command."""
     config_dir = sweep_dir / "config"
@@ -259,4 +222,24 @@ def test_cli_export_runs_not_found(sweep_dir):
     """sweep export-runs for missing sweep exits 1."""
     runner = CliRunner()
     result = runner.invoke(cli, ["export-runs", "nope"])
+    assert result.exit_code == 1
+
+
+def test_cli_clone(sweep_dir, default_command, monkeypatch):
+    """sweep clone copies meta+runs without ran history."""
+    monkeypatch.chdir(sweep_dir)
+    runner = CliRunner()
+    runner.invoke(cli, ["create", "orig", "-r", "a=1", "-r", "a=2"])
+    result = runner.invoke(cli, ["clone", "orig", "copy1"])
+    assert result.exit_code == 0
+    assert "Cloned" in result.output
+    import sweep as mod
+    cmd, lines = mod.get_sweep_config("copy1")
+    assert lines == ["a=1", "a=2"]
+
+
+def test_cli_clone_not_found(sweep_dir):
+    """sweep clone for missing source exits 1."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["clone", "missing", "dst"])
     assert result.exit_code == 1

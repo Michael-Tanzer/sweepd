@@ -9,43 +9,6 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def sweep_dir(tmp_path):
-    """Patch sweep module to use tmp_path so API reads/writes there."""
-    import sweep as mod
-    import sweep.core as core
-    base = str(tmp_path)
-    attrs = [
-        "get_sweep_dir", "get_configs_dir", "get_ran_dir", "get_review_dir",
-        "_meta_path", "_runs_path", "_ran_path", "_review_path",
-        "_legacy_sweep_path", "_legacy_ran_path",
-    ]
-    orig_mod = {k: getattr(mod, k) for k in attrs}
-    orig_core = {k: getattr(core, k) for k in attrs}
-    patches = {
-        "get_sweep_dir": lambda: base,
-        "get_configs_dir": lambda: os.path.join(base, "configs"),
-        "get_ran_dir": lambda: os.path.join(base, "ran"),
-        "get_review_dir": lambda: os.path.join(base, "review"),
-        "_meta_path": lambda sid: os.path.join(base, "configs", f"{sid}.meta.toml"),
-        "_runs_path": lambda sid: os.path.join(base, "configs", f"{sid}.runs.txt"),
-        "_ran_path": lambda sid: os.path.join(base, "ran", f"{sid}.txt"),
-        "_review_path": lambda sid: os.path.join(base, "review", f"{sid}.txt"),
-        "_legacy_sweep_path": lambda sid: os.path.join(base, f"{sid}.txt"),
-        "_legacy_ran_path": lambda sid: os.path.join(base, f"{sid}_ran.txt"),
-    }
-    for k, v in patches.items():
-        setattr(mod, k, v)
-        setattr(core, k, v)
-    try:
-        yield tmp_path
-    finally:
-        for k, v in orig_mod.items():
-            setattr(mod, k, v)
-        for k, v in orig_core.items():
-            setattr(core, k, v)
-
-
-@pytest.fixture
 def client(sweep_dir):
     """TestClient for the FastAPI app. Reload sweep.web_app after patching so handlers use patched paths."""
     import importlib
@@ -325,3 +288,115 @@ def test_api_add_runs_add_as_review(client, sweep_dir):
     rows_by_param = {row["param_line"]: row for row in detail["rows"]}
     assert rows_by_param["w=2"]["status"] == "review"
     assert rows_by_param["w=1"]["status"] == "pending"
+
+
+def test_api_sweeps_summary(client, sweep_dir):
+    """GET /api/sweeps/summary returns summary stats for all sweeps."""
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
+    os.makedirs(sweep_dir / "review", exist_ok=True)
+    mod.save_meta("sum1", ["python", "x.py"])
+    mod.save_runs("sum1", ["a=1", "a=2", "a=3"])
+    h1 = mod.run_hash("a=1")
+    (sweep_dir / "ran" / "sum1.txt").write_text(f"{h1}\ta=1\n")
+    mod.save_meta("sum2", ["python", "x.py"])
+    mod.save_runs("sum2", ["b=1"])
+    r = client.get("/api/sweeps/summary")
+    assert r.status_code == 200
+    data = r.json()
+    sweeps = {s["sweep_id"]: s for s in data["sweeps"]}
+    assert "sum1" in sweeps
+    assert sweeps["sum1"]["total"] == 3
+    assert sweeps["sum1"]["completed"] == 1
+    assert "sum2" in sweeps
+    assert sweeps["sum2"]["total"] == 1
+    assert sweeps["sum2"]["completed"] == 0
+
+
+def test_api_get_sweep_exit_codes(client, sweep_dir):
+    """GET /api/sweeps/<id> includes exit_code and 'failed' status for non-zero exits."""
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
+    mod.save_meta("ec1", ["python", "x.py"])
+    mod.save_runs("ec1", ["a=1", "a=2", "a=3"])
+    h1 = mod.run_hash("a=1")
+    h2 = mod.run_hash("a=2")
+    # a=1 succeeded (exit 0), a=2 failed (exit 1), a=3 not ran
+    (sweep_dir / "ran" / "ec1.txt").write_text(
+        f"{h1}\ta=1\t0\n{h2}\ta=2\t1\n"
+    )
+    r = client.get("/api/sweeps/ec1")
+    assert r.status_code == 200
+    d = r.json()
+    rows_by_param = {row["param_line"]: row for row in d["rows"]}
+    assert rows_by_param["a=1"]["status"] == "ran"
+    assert rows_by_param["a=1"]["exit_code"] == 0
+    assert rows_by_param["a=2"]["status"] == "failed"
+    assert rows_by_param["a=2"]["exit_code"] == 1
+    assert rows_by_param["a=3"]["status"] == "pending"
+    assert rows_by_param["a=3"]["exit_code"] is None
+
+
+def test_api_sweeps_summary_failed_count(client, sweep_dir):
+    """GET /api/sweeps/summary includes failed count."""
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
+    os.makedirs(sweep_dir / "review", exist_ok=True)
+    mod.save_meta("fc1", ["python", "x.py"])
+    mod.save_runs("fc1", ["a=1", "a=2"])
+    h1 = mod.run_hash("a=1")
+    h2 = mod.run_hash("a=2")
+    (sweep_dir / "ran" / "fc1.txt").write_text(
+        f"{h1}\ta=1\t0\n{h2}\ta=2\t1\n"
+    )
+    r = client.get("/api/sweeps/summary")
+    assert r.status_code == 200
+    sweeps = {s["sweep_id"]: s for s in r.json()["sweeps"]}
+    assert sweeps["fc1"]["failed"] == 1
+
+
+def test_api_get_sweep_timing(client, sweep_dir):
+    """GET /api/sweeps/<id> includes duration from timing data."""
+    import sweep as mod
+    from sweep.core import record_run_start, record_run_end
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    mod.save_meta("tm1", ["python", "x.py"])
+    mod.save_runs("tm1", ["a=1", "a=2"])
+    h1 = mod.run_hash("a=1")
+    h2 = mod.run_hash("a=2")
+    (sweep_dir / "ran" / "tm1.txt").write_text(f"{h1}\ta=1\t0\n")
+    record_run_start("tm1", h1)
+    record_run_end("tm1", h1, exit_code=0)
+    r = client.get("/api/sweeps/tm1")
+    assert r.status_code == 200
+    rows_by_param = {row["param_line"]: row for row in r.json()["rows"]}
+    assert rows_by_param["a=1"]["duration"] is not None
+    assert rows_by_param["a=2"]["duration"] is None
+
+
+def test_api_clone_sweep(client, sweep_dir):
+    """POST /api/sweeps/<id>/clone creates a copy without ran history."""
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
+    mod.save_meta("clsrc", ["python", "x.py"])
+    mod.save_runs("clsrc", ["a=1", "a=2"])
+    h1 = mod.run_hash("a=1")
+    (sweep_dir / "ran" / "clsrc.txt").write_text(f"{h1}\ta=1\n")
+    r = client.post("/api/sweeps/clsrc/clone", json={"new_sweep_id": "cldst"})
+    assert r.status_code == 200
+    assert r.json()["sweep_id"] == "cldst"
+    detail = client.get("/api/sweeps/cldst").json()
+    assert detail["total_count"] == 2
+    assert detail["completed_count"] == 0
+
+
+def test_api_clone_sweep_not_found(client):
+    """POST /api/sweeps/<missing>/clone returns 404."""
+    r = client.post("/api/sweeps/missing/clone", json={"new_sweep_id": "dst"})
+    assert r.status_code == 404
