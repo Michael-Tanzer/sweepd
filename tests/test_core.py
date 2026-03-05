@@ -50,6 +50,49 @@ def test_param_line_to_dict_with_quoted_commas():
     assert d["b"] == "2"
 
 
+def test_split_param_line_hydra_plus_single_quoted():
+    """split_param_line keeps Hydra + override with nested quotes as one segment."""
+    from sweep import split_param_line
+    line = 'experiment=malaria_patch_baseline_best,trainer.max_epochs=20,+\'logger.aim.run_name="model=${model.net.model.model_name}"\''
+    parts = split_param_line(line)
+    assert len(parts) == 3
+    assert parts[0] == "experiment=malaria_patch_baseline_best"
+    assert parts[1] == "trainer.max_epochs=20"
+    assert parts[2] == """+'logger.aim.run_name="model=${model.net.model.model_name}"'"""
+
+
+def test_execute_run_hydra_plus_override(monkeypatch):
+    """execute_run passes Hydra + override with nested quotes as a single argument."""
+    from sweep import execute_run
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return type("R", (), {"returncode": 0})()
+
+    monkeypatch.setattr("sweep.core.subprocess.run", fake_run)
+    line = 'experiment=malaria_patch_baseline_best,trainer.max_epochs=20,+\'logger.aim.run_name="model=${model.net.model.model_name}"\''
+    execute_run(["uv", "run", "src/train.py"], line)
+    assert len(calls) == 1
+    assert calls[0] == [
+        "uv", "run", "src/train.py",
+        "experiment=malaria_patch_baseline_best",
+        "trainer.max_epochs=20",
+        """+'logger.aim.run_name="model=${model.net.model.model_name}"'""",
+    ]
+
+
+def test_expand_grid_base_with_quoted_comma_in_value():
+    """_expand_grid must not split base_line on commas inside quoted values."""
+    from sweep.cli import _expand_grid
+    # base_line has a quoted value containing a comma — plain split(",") breaks this
+    base = """experiment=foo,+'logger.aim.run_name="model=swin, epoch=best"'"""
+    lines = _expand_grid(base, ["model/arch=swin_base,swin_small"])
+    assert len(lines) == 2
+    for line in lines:
+        assert """'logger.aim.run_name="model=swin, epoch=best"'""" in line
+
+
 def test_meta_runs_roundtrip(sweep_dir):
     """Save meta + runs, load back via get_sweep_config."""
     import sweep as mod

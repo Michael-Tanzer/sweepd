@@ -35,7 +35,7 @@ def _expand_grid(base_line: str, grid_specs: list[str]) -> list[str]:
     """
     base_parts = []
     if base_line and base_line.strip():
-        base_parts = [p.strip() for p in base_line.split(",") if p.strip()]
+        base_parts = [p.strip() for p in split_param_line(base_line) if p.strip()]
 
     if not grid_specs:
         return [",".join(base_parts)] if base_parts else []
