@@ -118,10 +118,7 @@ def _runs_to_table_rows(param_lines, completed_hashes, review_hashes=None, exit_
             "param_line": line,
             **d,
         })
-    n = len(param_lines)
-    shared_keys = sorted(k for k, c in key_counts.items() if c == n)
-    sparse_keys = sorted(k for k, c in key_counts.items() if c < n)
-    return rows, shared_keys + sparse_keys
+    return rows, sorted(key_counts, key=lambda k: (-key_counts[k], k))
 
 
 @app.get("/api/sweeps")
