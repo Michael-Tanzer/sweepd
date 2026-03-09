@@ -469,12 +469,18 @@ def claim_next_run(sweep_id: str) -> str | None:
     return None
 
 
+def _strip_shell_single_quotes(s: str) -> str:
+    """Remove shell single-quote wrapping (e.g. +'foo' -> +foo) without touching double quotes."""
+    import re
+    return re.sub(r"'([^']*)'", r"\1", s)
+
+
 def execute_run(command: list[str], param_line: str) -> int:
     """
     Runs command + Hydra overrides. command is list of args; param_line is comma-separated overrides.
     Returns exit code of the subprocess.
     """
-    params = [p.strip() for p in split_param_line(param_line) if p.strip()]
+    params = [_strip_shell_single_quotes(p.strip()) for p in split_param_line(param_line) if p.strip()]
     cmd = command + params
     logger.info("Executing: %s", " ".join(cmd))
     result = subprocess.run(cmd, stdout=None, stderr=None)

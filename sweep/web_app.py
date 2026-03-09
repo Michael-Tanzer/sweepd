@@ -4,6 +4,7 @@ FastAPI server for sweep manager: API + static web UI.
 Start with: sweep web  or  uvicorn sweep.web_app:app --host 0.0.0.0 --port 8765
 """
 import os
+from collections import Counter
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -93,12 +94,12 @@ def _runs_to_table_rows(param_lines, completed_hashes, review_hashes=None, exit_
         exit_codes = {}
     if timings is None:
         timings = {}
-    all_keys = set()
+    key_counts = Counter()
     rows = []
     for i, line in enumerate(param_lines):
         h = run_hash(line)
         d = param_line_to_dict(line)
-        all_keys.update(d.keys())
+        key_counts.update(d.keys())
         ec = exit_codes.get(h)
         timing = timings.get(h)
         duration = timing["duration"] if timing and timing.get("duration") is not None else None
@@ -117,7 +118,10 @@ def _runs_to_table_rows(param_lines, completed_hashes, review_hashes=None, exit_
             "param_line": line,
             **d,
         })
-    return rows, sorted(all_keys)
+    n = len(param_lines)
+    shared_keys = sorted(k for k, c in key_counts.items() if c == n)
+    sparse_keys = sorted(k for k, c in key_counts.items() if c < n)
+    return rows, shared_keys + sparse_keys
 
 
 @app.get("/api/sweeps")

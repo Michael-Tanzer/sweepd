@@ -339,6 +339,11 @@
     </div>
 
     <div class="form-group">
+      <label>Command</label>
+      <input type="text" id="qc-command" placeholder="e.g. python main.py" />
+    </div>
+
+    <div class="form-group">
       <label>Grid configuration</label>
       <textarea id="qc-grid" placeholder="One per line: key=val1,val2,...&#10;e.g. training.lr=0.01,0.001&#10;     training.batch_size=8,16"></textarea>
       <div class="qc-hint-row">
@@ -671,12 +676,8 @@
       if (!generatedRows.length) { showMsg('qc-msg', 'Generate runs first.', true); return; }
       const addAsReview = document.getElementById('qc-as-review').checked;
       try {
-        let cmd;
-        try {
-          cmd = (await fetchJson('/api/default-command')).command;
-        } catch {
-          cmd = ["python", "main.py"];
-        }
+        const cmdStr = document.getElementById('qc-command').value.trim() || 'python main.py';
+        const cmd = cmdStr.split(/\s+/);
         const res = await fetchJson('/api/sweeps', {
           method: 'POST',
           body: JSON.stringify({ sweep_id: sweepId, command: cmd, runs: generatedRows, add_as_review: addAsReview })
@@ -976,6 +977,14 @@
     }
 
     loadSweepList();
+    (async () => {
+      try {
+        const defaultCmd = (await fetchJson('/api/default-command')).command;
+        document.getElementById('qc-command').value = defaultCmd.join(' ');
+      } catch {
+        document.getElementById('qc-command').value = 'python main.py';
+      }
+    })();
   </script>
 </div>
 </body>
