@@ -137,10 +137,13 @@ def api_sweeps_summary():
         except (FileNotFoundError, ValueError):
             continue
         total = len(param_lines)
-        completed = len(get_completed_hashes(sid))
-        review = len(get_review_hashes(sid))
+        completed_hashes = get_completed_hashes(sid)
+        review_hashes = get_review_hashes(sid)
         exit_codes = get_completed_exit_codes(sid)
-        failed = sum(1 for ec in exit_codes.values() if ec != 0)
+        rows, _ = _runs_to_table_rows(param_lines, completed_hashes, review_hashes, exit_codes)
+        completed = sum(1 for r in rows if r["status"] in ("ran", "failed"))
+        review = sum(1 for r in rows if r["status"] == "review")
+        failed = sum(1 for r in rows if r["status"] == "failed")
         summaries.append({
             "sweep_id": sid,
             "total": total,
@@ -189,8 +192,8 @@ def api_get_sweep(sweep_id: str):
         "runs": param_lines,
         "rows": rows,
         "columns": columns,
-        "completed_count": len(completed),
-        "review_count": len(review),
+        "completed_count": sum(1 for r in rows if r["status"] in ("ran", "failed")),
+        "review_count": sum(1 for r in rows if r["status"] == "review"),
         "total_count": len(param_lines),
     }
 

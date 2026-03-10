@@ -78,7 +78,7 @@ def test_execute_run_hydra_plus_override(monkeypatch):
         "uv", "run", "src/train.py",
         "experiment=malaria_patch_baseline_best",
         "trainer.max_epochs=20",
-        """+'logger.aim.run_name="model=${model.net.model.model_name}"'""",
+        '+logger.aim.run_name="model=${model.net.model.model_name}"',
     ]
 
 
