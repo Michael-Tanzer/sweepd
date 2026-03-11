@@ -238,6 +238,122 @@ def test_cli_clone(sweep_dir, default_command, monkeypatch):
     assert lines == ["a=1", "a=2"]
 
 
+def test_cli_info_not_found(sweep_dir):
+    """sweep info with unknown hash exits 1."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["info", "zzzzzz"])
+    assert result.exit_code == 1
+    assert "not found" in result.output.lower()
+
+
+def test_cli_info_pending_run(sweep_dir):
+    """sweep info shows pending status for a run with no timing data."""
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    mod.save_meta("inf1", ["python", "x.py"])
+    mod.save_runs("inf1", ["a=1"])
+    h = mod.run_hash("a=1")
+    runner = CliRunner()
+    result = runner.invoke(cli, ["info", h])
+    assert result.exit_code == 0
+    assert "pending" in result.output.lower()
+    assert "Sweep:      inf1" in result.output
+    assert "a=1" in result.output
+
+
+def test_cli_info_completed_run(sweep_dir):
+    """sweep info shows status, times, and exit code for a completed run."""
+    import json
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    mod.save_meta("inf2", ["python", "x.py"])
+    mod.save_runs("inf2", ["a=1"])
+    h = mod.run_hash("a=1")
+    (sweep_dir / "ran" / "inf2.txt").write_text(f"{h}\ta=1\t0\n")
+    (sweep_dir / "timing" / "inf2.jsonl").write_text(
+        json.dumps({"hash": h, "event": "start", "time": 1710000000.0}) + "\n"
+        + json.dumps({"hash": h, "event": "end", "time": 1710000067.0, "exit_code": 0}) + "\n"
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli, ["info", h])
+    assert result.exit_code == 0
+    assert "ran" in result.output
+    assert "Start:" in result.output
+    assert "End:" in result.output
+    assert "1m 7s" in result.output
+    assert "Exit code:  0" in result.output
+
+
+def test_cli_info_failed_run(sweep_dir):
+    """sweep info shows failed status for non-zero exit code."""
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
+    mod.save_meta("inf3", ["python", "x.py"])
+    mod.save_runs("inf3", ["a=1"])
+    h = mod.run_hash("a=1")
+    (sweep_dir / "ran" / "inf3.txt").write_text(f"{h}\ta=1\t1\n")
+    runner = CliRunner()
+    result = runner.invoke(cli, ["info", h])
+    assert result.exit_code == 0
+    assert "failed" in result.output.lower()
+
+
+def test_cli_info_potentially_running(sweep_dir):
+    """sweep info shows 'potentially running' for a run with start but no end."""
+    import json
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    mod.save_meta("inf4", ["python", "x.py"])
+    mod.save_runs("inf4", ["a=1"])
+    h = mod.run_hash("a=1")
+    (sweep_dir / "timing" / "inf4.jsonl").write_text(
+        json.dumps({"hash": h, "event": "start", "time": 1710000000.0}) + "\n"
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli, ["info", h])
+    assert result.exit_code == 0
+    assert "potentially running" in result.output.lower()
+    assert "\u2014" in result.output  # em dash for missing end/duration
+
+
+def test_cli_info_with_sweep_id(sweep_dir):
+    """sweep info --sweep-id restricts search to specified sweep."""
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    mod.save_meta("s1", ["python", "x.py"])
+    mod.save_runs("s1", ["a=1"])
+    mod.save_meta("s2", ["python", "x.py"])
+    mod.save_runs("s2", ["b=1"])
+    h = mod.run_hash("a=1")
+    runner = CliRunner()
+    # Found in s1
+    result = runner.invoke(cli, ["info", h, "--sweep-id", "s1"])
+    assert result.exit_code == 0
+    assert "Sweep:      s1" in result.output
+    # Not found in s2
+    result = runner.invoke(cli, ["info", h, "--sweep-id", "s2"])
+    assert result.exit_code == 1
+
+
+def test_cli_info_review_status(sweep_dir):
+    """sweep info shows review status for runs in review."""
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "review", exist_ok=True)
+    mod.save_meta("inf5", ["python", "x.py"])
+    mod.save_runs("inf5", ["a=1"])
+    h = mod.run_hash("a=1")
+    mod.add_review_lines_by_hashes("inf5", [h])
+    runner = CliRunner()
+    result = runner.invoke(cli, ["info", h])
+    assert result.exit_code == 0
+    assert "review" in result.output.lower()
+
+
 def test_cli_clone_not_found(sweep_dir):
     """sweep clone for missing source exits 1."""
     runner = CliRunner()

@@ -361,6 +361,15 @@ def get_run_timings(sweep_id: str) -> dict[str, dict]:
                     "duration": duration,
                     "exit_code": entry.get("exit_code"),
                 }
+    # Include runs that started but haven't ended (potentially still running)
+    for h, start_time in starts.items():
+        if h not in results:
+            results[h] = {
+                "start": start_time,
+                "end": None,
+                "duration": None,
+                "exit_code": None,
+            }
     return results
 
 

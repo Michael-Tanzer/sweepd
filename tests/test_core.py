@@ -583,8 +583,12 @@ def test_run_timings_rerun_clears_stale(sweep_dir):
     # Rerun: only start so far (still in progress)
     record_run_start("tr", h)
     timings = get_run_timings("tr")
-    # Should NOT return stale first-execution result
-    assert h not in timings
+    # Should have start-only entry (no stale end from first execution)
+    assert h in timings
+    assert timings[h]["start"] is not None
+    assert timings[h]["end"] is None
+    assert timings[h]["duration"] is None
+    assert timings[h]["exit_code"] is None
 
 
 def test_run_timings_rerun_returns_latest(sweep_dir):
@@ -600,6 +604,20 @@ def test_run_timings_rerun_returns_latest(sweep_dir):
     record_run_end("tr2", h, exit_code=0)
     timings = get_run_timings("tr2")
     assert timings[h]["exit_code"] == 0
+
+
+def test_run_timings_start_only(sweep_dir):
+    """get_run_timings includes start-only entries with end/duration/exit_code as None."""
+    from sweep.core import record_run_start, get_run_timings, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    record_run_start("tso", h)
+    timings = get_run_timings("tso")
+    assert h in timings
+    assert timings[h]["start"] is not None
+    assert timings[h]["end"] is None
+    assert timings[h]["duration"] is None
+    assert timings[h]["exit_code"] is None
 
 
 def test_run_timings_multiple_runs(sweep_dir):
