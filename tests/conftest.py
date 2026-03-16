@@ -13,12 +13,12 @@ def sweep_dir(tmp_path):
     # Public attrs: patched on both sweep package and sweep.core
     public_attrs = [
         "get_sweep_dir", "get_configs_dir", "get_ran_dir", "get_review_dir",
-        "get_timing_dir",
+        "get_timing_dir", "get_logs_dir",
     ]
     # Private attrs: patched only on sweep.core
     private_attrs = [
         "_meta_path", "_runs_path", "_ran_path", "_review_path",
-        "_timing_path", "_legacy_sweep_path", "_legacy_ran_path",
+        "_timing_path", "_log_path", "_legacy_sweep_path", "_legacy_ran_path",
     ]
 
     orig_mod = {k: getattr(mod, k) for k in public_attrs}
@@ -30,11 +30,13 @@ def sweep_dir(tmp_path):
         "get_ran_dir": lambda: os.path.join(base, "ran"),
         "get_review_dir": lambda: os.path.join(base, "review"),
         "get_timing_dir": lambda: os.path.join(base, "timing"),
+        "get_logs_dir": lambda: os.path.join(base, "logs"),
         "_meta_path": lambda sid: os.path.join(base, "configs", f"{sid}.meta.toml"),
         "_runs_path": lambda sid: os.path.join(base, "configs", f"{sid}.runs.txt"),
         "_ran_path": lambda sid: os.path.join(base, "ran", f"{sid}.txt"),
         "_review_path": lambda sid: os.path.join(base, "review", f"{sid}.txt"),
         "_timing_path": lambda sid: os.path.join(base, "timing", f"{sid}.jsonl"),
+        "_log_path": lambda sid, h: os.path.join(base, "logs", sid, f"{h}.log"),
         "_legacy_sweep_path": lambda sid: os.path.join(base, f"{sid}.txt"),
         "_legacy_ran_path": lambda sid: os.path.join(base, f"{sid}_ran.txt"),
     }

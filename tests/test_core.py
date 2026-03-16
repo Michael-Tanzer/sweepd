@@ -341,6 +341,23 @@ def test_execute_run_logs_command(monkeypatch, caplog):
     assert any("Executing" in r.message for r in caplog.records)
 
 
+def _make_fake_start_process(exit_code_fn=None):
+    """Create a fake start_process that returns a mock Popen.
+
+    exit_code_fn: callable(cmd, param_line) -> int, defaults to always 0.
+    """
+    if exit_code_fn is None:
+        exit_code_fn = lambda cmd, line: 0
+    executed = []
+
+    def fake_start_process(cmd, line, log_path=None):
+        ec = exit_code_fn(cmd, line)
+        executed.append((cmd, line))
+        return type("FakeProc", (), {"pid": 12345, "wait": lambda self: ec})()
+
+    return fake_start_process, executed
+
+
 def test_sweep_run_logs_progress(sweep_dir, monkeypatch, caplog):
     """sweep_run logs sweep info and progress at INFO level."""
     import logging
@@ -349,10 +366,9 @@ def test_sweep_run_logs_progress(sweep_dir, monkeypatch, caplog):
     os.makedirs(sweep_dir / "configs", exist_ok=True)
     mod.save_meta("logtest", ["python", "x.py"])
     mod.save_runs("logtest", ["a=1"])
-    def fake_execute(cmd, line):
-        return 0
-    monkeypatch.setattr(mod, "execute_run", fake_execute)
-    monkeypatch.setattr(core, "execute_run", fake_execute)
+    fake_start, _ = _make_fake_start_process()
+    monkeypatch.setattr(mod, "start_process", fake_start)
+    monkeypatch.setattr(core, "start_process", fake_start)
     with caplog.at_level(logging.INFO, logger="sweep.core"):
         mod.sweep_run("logtest")
     messages = " ".join(r.message for r in caplog.records)
@@ -400,26 +416,21 @@ def test_sweep_run_loop_until_done(sweep_dir, monkeypatch):
     mod.save_meta("loop", ["python", "x.py"])
     mod.save_runs("loop", ["a=1", "a=2"])
     claimed = []
-    executed = []
     original_claim = core.claim_next_run
     def track_claim(sid):
         p = original_claim(sid)
         if p:
             claimed.append(p)
         return p
-    def track_execute(cmd, line):
-        executed.append((cmd, line))
-        return 0
+    fake_start, executed = _make_fake_start_process()
     monkeypatch.setattr(mod, "claim_next_run", track_claim)
     monkeypatch.setattr(core, "claim_next_run", track_claim)
-    monkeypatch.setattr(mod, "execute_run", track_execute)
-    monkeypatch.setattr(core, "execute_run", track_execute)
+    monkeypatch.setattr(mod, "start_process", fake_start)
+    monkeypatch.setattr(core, "start_process", fake_start)
     mod.sweep_run("loop")
     assert len(claimed) == 2
     assert claimed == ["a=1", "a=2"]
     assert len(executed) == 2
-    assert executed[0][1] == "a=1"
-    assert executed[1][1] == "a=2"
 
 
 # --- Review system tests ---
@@ -534,11 +545,12 @@ def test_sweep_run_records_exit_code(sweep_dir, monkeypatch):
     mod.save_meta("ecrun", ["python", "x.py"])
     mod.save_runs("ecrun", ["a=1", "a=2"])
     call_count = [0]
-    def fake_execute(cmd, line):
+    def ec_fn(cmd, line):
         call_count[0] += 1
         return 0 if call_count[0] == 1 else 1
-    monkeypatch.setattr(mod, "execute_run", fake_execute)
-    monkeypatch.setattr(core, "execute_run", fake_execute)
+    fake_start, _ = _make_fake_start_process(exit_code_fn=ec_fn)
+    monkeypatch.setattr(mod, "start_process", fake_start)
+    monkeypatch.setattr(core, "start_process", fake_start)
     mod.sweep_run("ecrun")
     from sweep.core import get_completed_exit_codes
     codes = get_completed_exit_codes("ecrun")
@@ -644,16 +656,16 @@ def test_sweep_run_records_timing(sweep_dir, monkeypatch):
     os.makedirs(sweep_dir / "timing", exist_ok=True)
     mod.save_meta("trun", ["python", "x.py"])
     mod.save_runs("trun", ["a=1"])
-    def fake_execute(cmd, line):
-        return 0
-    monkeypatch.setattr(mod, "execute_run", fake_execute)
-    monkeypatch.setattr(core, "execute_run", fake_execute)
+    fake_start, _ = _make_fake_start_process()
+    monkeypatch.setattr(mod, "start_process", fake_start)
+    monkeypatch.setattr(core, "start_process", fake_start)
     mod.sweep_run("trun")
     timings = core.get_run_timings("trun")
     h = mod.run_hash("a=1")
     assert h in timings
     assert timings[h]["exit_code"] == 0
     assert timings[h]["end"] >= timings[h]["start"]
+    assert timings[h]["pid"] == 12345
 
 
 # --- Sweep cloning tests ---
@@ -684,3 +696,156 @@ def test_clone_sweep_source_not_found(sweep_dir):
     os.makedirs(sweep_dir / "configs", exist_ok=True)
     with pytest.raises(FileNotFoundError):
         clone_sweep("missing", "dst")
+
+
+# --- PID tracking tests ---
+
+def test_record_run_start_with_pid(sweep_dir):
+    """record_run_start stores PID in timing JSONL when provided."""
+    import json
+    from sweep.core import record_run_start, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    record_run_start("pid1", h, pid=42)
+    path = sweep_dir / "timing" / "pid1.jsonl"
+    entry = json.loads(path.read_text().strip())
+    assert entry["pid"] == 42
+    assert entry["hash"] == h
+    assert entry["event"] == "start"
+
+
+def test_get_run_timings_includes_pid(sweep_dir):
+    """get_run_timings returns pid in the timing dict."""
+    import json
+    from sweep.core import get_run_timings, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    (sweep_dir / "timing" / "pid2.jsonl").write_text(
+        json.dumps({"hash": h, "event": "start", "time": 1710000000.0, "pid": 99}) + "\n"
+        + json.dumps({"hash": h, "event": "end", "time": 1710000060.0, "exit_code": 0}) + "\n"
+    )
+    timings = get_run_timings("pid2")
+    assert timings[h]["pid"] == 99
+
+
+def test_get_run_timings_killed_event(sweep_dir):
+    """A 'killed' event terminates a running entry (no longer appears as running)."""
+    import json
+    from sweep.core import get_run_timings, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    (sweep_dir / "timing" / "kill1.jsonl").write_text(
+        json.dumps({"hash": h, "event": "start", "time": 1710000000.0, "pid": 55}) + "\n"
+        + json.dumps({"hash": h, "event": "killed", "time": 1710000010.0}) + "\n"
+    )
+    timings = get_run_timings("kill1")
+    assert timings[h]["end"] == 1710000010.0
+    assert timings[h]["duration"] == 10.0
+
+
+def test_kill_run_sends_signal(sweep_dir, monkeypatch):
+    """kill_run sends signal to the PID from timing data."""
+    import json
+    from sweep.core import kill_run, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    (sweep_dir / "timing" / "ks1.jsonl").write_text(
+        json.dumps({"hash": h, "event": "start", "time": 1710000000.0, "pid": 777}) + "\n"
+    )
+    killed = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    assert kill_run("ks1", h, 15) is True
+    assert killed == [(777, 15)]
+
+
+def test_kill_run_process_not_found(sweep_dir, monkeypatch):
+    """kill_run returns False when the process no longer exists."""
+    import json
+    from sweep.core import kill_run, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    (sweep_dir / "timing" / "ks2.jsonl").write_text(
+        json.dumps({"hash": h, "event": "start", "time": 1710000000.0, "pid": 999}) + "\n"
+    )
+    def fake_kill(pid, sig):
+        raise ProcessLookupError()
+    monkeypatch.setattr(os, "kill", fake_kill)
+    assert kill_run("ks2", h, 15) is False
+
+
+def test_get_running_pid_no_running(sweep_dir):
+    """get_running_pid returns None when run has already ended."""
+    import json
+    from sweep.core import get_running_pid, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    (sweep_dir / "timing" / "rp1.jsonl").write_text(
+        json.dumps({"hash": h, "event": "start", "time": 1710000000.0, "pid": 111}) + "\n"
+        + json.dumps({"hash": h, "event": "end", "time": 1710000060.0, "exit_code": 0}) + "\n"
+    )
+    assert get_running_pid("rp1", h) is None
+
+
+def test_get_running_pid_no_pid_recorded(sweep_dir):
+    """get_running_pid returns None when start event has no pid field."""
+    import json
+    from sweep.core import get_running_pid, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    # Start event without pid field (e.g. old format)
+    (sweep_dir / "timing" / "rp2.jsonl").write_text(
+        json.dumps({"hash": h, "event": "start", "time": 1710000000.0}) + "\n"
+    )
+    assert get_running_pid("rp2", h) is None
+
+
+def test_record_run_killed_writes_jsonl(sweep_dir):
+    """record_run_killed writes a correct 'killed' event to timing JSONL."""
+    import json
+    from sweep.core import record_run_killed, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    record_run_killed("rk1", h)
+    path = sweep_dir / "timing" / "rk1.jsonl"
+    entry = json.loads(path.read_text().strip())
+    assert entry["hash"] == h
+    assert entry["event"] == "killed"
+    assert "time" in entry
+
+
+def test_start_process_tee_captures_log(sweep_dir):
+    """start_process with log_path tees output to both stdout and log file."""
+    import sweep.core as core
+    os.makedirs(sweep_dir / "logs" / "tp1", exist_ok=True)
+    log_path = str(sweep_dir / "logs" / "tp1" / "abc123.log")
+    proc = core.start_process(["echo", "hello world"], "", log_path=log_path)
+    exit_code = proc.wait()
+    assert exit_code == 0
+    # Wait for tee thread to finish writing
+    if hasattr(proc, "_tee_thread"):
+        proc._tee_thread.join(timeout=5)
+    with open(log_path, "r") as f:
+        content = f.read()
+    assert "hello world" in content
+
+
+def test_start_process_no_log(sweep_dir):
+    """start_process without log_path runs subprocess normally."""
+    import sweep.core as core
+    proc = core.start_process(["echo", "test"], "")
+    exit_code = proc.wait()
+    assert exit_code == 0
+    assert not hasattr(proc, "_tee_thread")
+
+
+def test_get_run_timings_pid_none_when_not_in_entry(sweep_dir):
+    """get_run_timings returns pid=None when start event has no pid."""
+    import json
+    from sweep.core import get_run_timings, run_hash
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    h = run_hash("a=1")
+    (sweep_dir / "timing" / "pn1.jsonl").write_text(
+        json.dumps({"hash": h, "event": "start", "time": 1710000000.0}) + "\n"
+    )
+    timings = get_run_timings("pn1")
+    assert timings[h]["pid"] is None

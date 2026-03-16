@@ -108,7 +108,10 @@ def _runs_to_table_rows(param_lines, completed_hashes, review_hashes=None, exit_
         elif h in review_hashes:
             status = "review"
         else:
-            status = "pending"
+            if timing and timing.get("start") is not None and timing.get("end") is None:
+                status = "running"
+            else:
+                status = "pending"
         rows.append({
             "index": i,
             "hash": h,

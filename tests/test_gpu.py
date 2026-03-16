@@ -81,6 +81,15 @@ def sweep_dir_gpu(sweep_dir):
     return sweep_dir
 
 
+def _make_fake_start_process(exit_code=0):
+    """Create a fake start_process for daemon tests."""
+    executed = []
+    def fake_start(cmd, line, log_path=None):
+        executed.append(line)
+        return type("FakeProc", (), {"pid": 99999, "wait": lambda self: exit_code})()
+    return fake_start, executed
+
+
 def test_sweep_daemon_logs_startup(sweep_dir_gpu, monkeypatch, caplog):
     """sweep_daemon logs startup messages at INFO level."""
     import logging
@@ -92,10 +101,8 @@ def test_sweep_daemon_logs_startup(sweep_dir_gpu, monkeypatch, caplog):
     mod.save_meta("dlog", ["python", "x.py"])
     mod.save_runs("dlog", [])
 
-    def fake_execute(cmd, param_line):
-        return 0
-
-    monkeypatch.setattr(gpu, "execute_run", fake_execute)
+    fake_start, _ = _make_fake_start_process()
+    monkeypatch.setattr(gpu, "start_process", fake_start)
 
     sleep_calls = []
     def fake_sleep(secs):
@@ -124,14 +131,8 @@ def test_sweep_daemon_cpu_mode_runs_all_claims_then_exits(sweep_dir_gpu, monkeyp
     mod.save_meta("d1", ["python", "x.py"])
     mod.save_runs("d1", ["a=1", "a=2"])
 
-    executed = []
-
-    def fake_execute(cmd, param_line):
-        executed.append(param_line)
-        return 0
-
-    # Patch execute_run on the gpu module's namespace (where it was imported)
-    monkeypatch.setattr(gpu, "execute_run", fake_execute)
+    fake_start, executed = _make_fake_start_process()
+    monkeypatch.setattr(gpu, "start_process", fake_start)
 
     # Break loop after first "no work" sleep
     sleep_calls = []
@@ -162,13 +163,8 @@ def test_sweep_daemon_gpu_unavailable_falls_back_to_cpu(sweep_dir_gpu, monkeypat
     mod.save_meta("d2", ["python", "x.py"])
     mod.save_runs("d2", ["b=1"])
 
-    executed = []
-
-    def fake_execute(cmd, param_line):
-        executed.append(param_line)
-        return 0
-
-    monkeypatch.setattr(gpu, "execute_run", fake_execute)
+    fake_start, executed = _make_fake_start_process()
+    monkeypatch.setattr(gpu, "start_process", fake_start)
 
     # nvidia-smi unavailable
     monkeypatch.setattr(gpu, "is_gpu_free", lambda *a, **kw: None)

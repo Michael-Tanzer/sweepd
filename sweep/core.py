@@ -72,6 +72,18 @@ def get_timing_dir() -> str:
     return os.path.join(get_sweep_dir(), "timing")
 
 
+def get_logs_dir() -> str:
+    """
+    Returns ~/.sweepd/logs directory path (for run output logs).
+    """
+    return os.path.join(get_sweep_dir(), "logs")
+
+
+def _log_path(sweep_id: str, run_hash_str: str) -> str:
+    """Path to logs/<sweep_id>/<run_hash>.log."""
+    return os.path.join(get_logs_dir(), sweep_id, f"{run_hash_str}.log")
+
+
 def split_param_line(param_line: str) -> list[str]:
     """
     Splits a param line on commas that are not inside single or double quotes.
@@ -307,12 +319,14 @@ def record_exit_code(sweep_id: str, run_hash_str: str, exit_code: int) -> None:
             f.write(line + "\n")
 
 
-def record_run_start(sweep_id: str, run_hash_str: str) -> None:
+def record_run_start(sweep_id: str, run_hash_str: str, pid: int | None = None) -> None:
     """Append a timing start entry (JSONL) to timing/<sweep_id>.jsonl."""
     import json
     path = _timing_path(sweep_id)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     entry = {"hash": run_hash_str, "event": "start", "time": time.time()}
+    if pid is not None:
+        entry["pid"] = pid
     with open(path, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
@@ -327,16 +341,28 @@ def record_run_end(sweep_id: str, run_hash_str: str, exit_code: int) -> None:
         f.write(json.dumps(entry) + "\n")
 
 
+def record_run_killed(sweep_id: str, run_hash_str: str) -> None:
+    """Append a timing 'killed' event to timing/<sweep_id>.jsonl."""
+    import json
+    path = _timing_path(sweep_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    entry = {"hash": run_hash_str, "event": "killed", "time": time.time()}
+    with open(path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
 def get_run_timings(sweep_id: str) -> dict[str, dict]:
-    """Read timing JSONL and return dict mapping hash -> {start, end, exit_code, duration}.
+    """Read timing JSONL and return dict mapping hash -> {start, end, exit_code, duration, pid}.
 
     Uses the last start/end pair for each hash (in case of reruns).
+    Treats 'killed' events like 'end' events.
     """
     import json
     path = _timing_path(sweep_id)
     if not os.path.exists(path):
         return {}
     starts: dict[str, float] = {}
+    pids: dict[str, int | None] = {}
     results: dict[str, dict] = {}
     with open(path, "r") as f:
         for line in f:
@@ -350,8 +376,9 @@ def get_run_timings(sweep_id: str) -> dict[str, dict]:
             h = entry.get("hash", "")
             if entry.get("event") == "start":
                 starts[h] = entry["time"]
+                pids[h] = entry.get("pid")
                 results.pop(h, None)
-            elif entry.get("event") == "end":
+            elif entry.get("event") in ("end", "killed"):
                 start_time = starts.get(h)
                 end_time = entry["time"]
                 duration = (end_time - start_time) if start_time is not None else None
@@ -360,6 +387,7 @@ def get_run_timings(sweep_id: str) -> dict[str, dict]:
                     "end": end_time,
                     "duration": duration,
                     "exit_code": entry.get("exit_code"),
+                    "pid": pids.get(h),
                 }
     # Include runs that started but haven't ended (potentially still running)
     for h, start_time in starts.items():
@@ -369,6 +397,7 @@ def get_run_timings(sweep_id: str) -> dict[str, dict]:
                 "end": None,
                 "duration": None,
                 "exit_code": None,
+                "pid": pids.get(h),
             }
     return results
 
@@ -496,6 +525,59 @@ def execute_run(command: list[str], param_line: str) -> int:
     return result.returncode
 
 
+def _tee_output(pipe, log_path: str) -> None:
+    """Read from pipe, write to both stdout and log file."""
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    with open(log_path, "wb") as lf:
+        for line in iter(pipe.readline, b""):
+            sys.stdout.buffer.write(line)
+            sys.stdout.buffer.flush()
+            lf.write(line)
+            lf.flush()
+    pipe.close()
+
+
+def start_process(command: list[str], param_line: str, log_path: str | None = None) -> subprocess.Popen:
+    """Start subprocess, return Popen (caller manages wait/kill).
+
+    If log_path is provided, tees stdout+stderr to both terminal and log file
+    via a background thread. Caller should join proc._tee_thread after wait().
+    """
+    import threading
+    params = [_strip_shell_single_quotes(p.strip()) for p in split_param_line(param_line) if p.strip()]
+    cmd = command + params
+    logger.info("Executing: %s", " ".join(cmd))
+    if log_path:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        tee_thread = threading.Thread(target=_tee_output, args=(proc.stdout, log_path), daemon=True)
+        tee_thread.start()
+        proc._tee_thread = tee_thread
+        return proc
+    return subprocess.Popen(cmd, stdout=None, stderr=None)
+
+
+def get_running_pid(sweep_id: str, run_hash_str: str) -> int | None:
+    """Return PID for a currently-running hash, or None if not running."""
+    timings = get_run_timings(sweep_id)
+    timing = timings.get(run_hash_str)
+    if timing and timing.get("start") and not timing.get("end"):
+        return timing.get("pid")
+    return None
+
+
+def kill_run(sweep_id: str, run_hash_str: str, signal_num: int = 15) -> bool:
+    """Kill a running process by hash. Returns True if signal was sent."""
+    pid = get_running_pid(sweep_id, run_hash_str)
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, signal_num)
+        record_run_killed(sweep_id, run_hash_str)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
 def sweep_run(sweep_id: str) -> None:
     """
     Main sweep loop: claim and execute runs until all done. Logs Run i/N progress.
@@ -525,8 +607,12 @@ def sweep_run(sweep_id: str) -> None:
         h = run_hash(param_line)
         logger.info("Run %d/%d [%s] %s", run_index, total, h, param_line)
 
-        record_run_start(sweep_id, h)
-        exit_code = execute_run(command, param_line)
+        log_path = _log_path(sweep_id, h)
+        proc = start_process(command, param_line, log_path=log_path)
+        record_run_start(sweep_id, h, pid=proc.pid)
+        exit_code = proc.wait()
+        if hasattr(proc, "_tee_thread"):
+            proc._tee_thread.join(timeout=5)
         record_run_end(sweep_id, h, exit_code)
         record_exit_code(sweep_id, h, exit_code)
         if exit_code == 0:

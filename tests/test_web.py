@@ -400,3 +400,41 @@ def test_api_clone_sweep_not_found(client):
     """POST /api/sweeps/<missing>/clone returns 404."""
     r = client.post("/api/sweeps/missing/clone", json={"new_sweep_id": "dst"})
     assert r.status_code == 404
+
+
+def test_api_get_sweep_running_status(client, sweep_dir):
+    """GET /api/sweeps/<id> includes 'running' status for runs with start but no end."""
+    import json
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    mod.save_meta("run1", ["python", "x.py"])
+    mod.save_runs("run1", ["a=1", "a=2"])
+    h1 = mod.run_hash("a=1")
+    (sweep_dir / "timing" / "run1.jsonl").write_text(
+        json.dumps({"hash": h1, "event": "start", "time": 1710000000.0}) + "\n"
+    )
+    r = client.get("/api/sweeps/run1")
+    assert r.status_code == 200
+    rows_by_hash = {row["hash"]: row for row in r.json()["rows"]}
+    assert rows_by_hash[h1]["status"] == "running"
+    assert rows_by_hash[mod.run_hash("a=2")]["status"] == "pending"
+
+
+def test_api_sweeps_summary_running_count(client, sweep_dir):
+    """GET /api/sweeps/summary does not crash with running runs (running counted as non-completed)."""
+    import json
+    import sweep as mod
+    os.makedirs(sweep_dir / "configs", exist_ok=True)
+    os.makedirs(sweep_dir / "timing", exist_ok=True)
+    mod.save_meta("sumr", ["python", "x.py"])
+    mod.save_runs("sumr", ["a=1"])
+    h = mod.run_hash("a=1")
+    (sweep_dir / "timing" / "sumr.jsonl").write_text(
+        json.dumps({"hash": h, "event": "start", "time": 1710000000.0}) + "\n"
+    )
+    r = client.get("/api/sweeps/summary")
+    assert r.status_code == 200
+    summaries = {s["sweep_id"]: s for s in r.json()["sweeps"]}
+    assert summaries["sumr"]["completed"] == 0
+    assert summaries["sumr"]["total"] == 1

@@ -15,8 +15,10 @@ from sweep import (
     get_default_command,
     get_review_hashes,
     get_run_timings,
+    get_running_pid,
     get_runs,
     get_sweep_config,
+    kill_run,
     list_sweep_ids,
     remove_ran_lines_by_hashes,
     run_hash,
@@ -26,7 +28,7 @@ from sweep import (
     sweep_daemon,
     sweep_run,
 )
-from sweep.core import _meta_path, _ran_path, _runs_path
+from sweep.core import _log_path, _meta_path, _ran_path, _runs_path
 
 
 def _expand_grid(base_line: str, grid_specs: list[str]) -> list[str]:
@@ -111,115 +113,234 @@ def cmd_show(sweep_id):
         click.echo(str(e), err=True)
         raise SystemExit(1)
     completed = get_completed_hashes(sweep_id)
+    exit_codes = get_completed_exit_codes(sweep_id)
+    review_hashes = get_review_hashes(sweep_id)
+    timings = get_run_timings(sweep_id)
+
+    # Compute summary counts
+    n_completed = 0
+    n_failed = 0
+    n_running = 0
+    n_review = 0
+    for line in param_lines:
+        h = run_hash(line)
+        if h in completed:
+            ec = exit_codes.get(h)
+            if ec is not None and ec != 0:
+                n_failed += 1
+            else:
+                n_completed += 1
+        elif h in review_hashes:
+            n_review += 1
+        else:
+            timing = timings.get(h, {})
+            if timing.get("start") is not None and timing.get("end") is None:
+                n_running += 1
+
     click.echo(f"Sweep: {sweep_id}")
     click.echo(f"Command: {' '.join(command)}")
     click.echo(f"Total runs: {len(param_lines)}")
-    click.echo(f"Completed: {len(completed)}")
+    parts = [f"{n_completed} completed"]
+    if n_failed:
+        parts.append(f"{n_failed} failed")
+    if n_running:
+        parts.append(f"{n_running} running")
+    if n_review:
+        parts.append(f"{n_review} review")
+    click.echo(f"Status: {', '.join(parts)}")
     click.echo("")
     for i, line in enumerate(param_lines):
         h = run_hash(line)
-        status = "ran" if h in completed else "pending"
+        if h in completed:
+            ec = exit_codes.get(h)
+            if ec is not None and ec != 0:
+                status = f"failed (exit {ec})"
+            elif ec is not None:
+                status = f"completed (exit {ec})"
+            else:
+                status = "completed"
+        elif h in review_hashes:
+            status = "review"
+        else:
+            timing = timings.get(h, {})
+            if timing.get("start") is not None and timing.get("end") is None:
+                status = "running"
+            else:
+                status = "pending"
         click.echo(f"  {i}  {h}  {status}  {line}")
 
 
 @cli.command("info")
-@click.argument("run_hash_str")
+@click.argument("run_hashes", nargs=-1, required=True)
 @click.option("--sweep-id", default=None, help="Sweep ID to search in. If omitted, searches all sweeps.")
-def cmd_info(run_hash_str, sweep_id):
-    """Show detailed info for a specific run by its hash."""
+def cmd_info(run_hashes, sweep_id):
+    """Show detailed info for one or more runs by hash."""
     from datetime import datetime
 
-    def _find_run(sid):
+    def _find_run(sid, target_hash):
         """Returns (param_line, index) if hash found in sweep, else None."""
         try:
             _, param_lines = get_sweep_config(sid)
         except FileNotFoundError:
             return None
         for i, line in enumerate(param_lines):
-            if run_hash(line) == run_hash_str:
+            if run_hash(line) == target_hash:
                 return line, i
         return None
 
-    # Find the run
-    if sweep_id:
-        result = _find_run(sweep_id)
-        if not result:
-            click.echo(f"Run {run_hash_str} not found in sweep {sweep_id}.", err=True)
-            raise SystemExit(1)
-        found_sweep = sweep_id
-    else:
-        found_sweep = None
-        result = None
-        for sid in list_sweep_ids():
-            result = _find_run(sid)
-            if result:
-                found_sweep = sid
-                break
-        if not result:
-            click.echo(f"Run {run_hash_str} not found in any sweep.", err=True)
-            raise SystemExit(1)
+    any_missing = False
+    for idx, run_hash_str in enumerate(run_hashes):
+        if idx > 0:
+            click.echo("")
 
-    param_line, index = result
-
-    # Gather status info
-    completed = get_completed_hashes(found_sweep)
-    review = get_review_hashes(found_sweep)
-    exit_codes = get_completed_exit_codes(found_sweep)
-    timings = get_run_timings(found_sweep)
-
-    h = run_hash_str
-    if h in completed:
-        ec = exit_codes.get(h)
-        status = "failed" if ec and ec != 0 else "ran"
-    elif h in review:
-        status = "review"
-    else:
-        status = "pending"
-
-    timing = timings.get(h, {})
-    has_start = timing.get("start") is not None
-    has_end = timing.get("end") is not None
-
-    # If pending but has a start time with no end, it's potentially running
-    if status == "pending" and has_start and not has_end:
-        status_display = "pending (potentially running)"
-    else:
-        status_display = status
-
-    click.echo(f"Sweep:      {found_sweep}")
-    click.echo(f"Hash:       {h}")
-    click.echo(f"Status:     {status_display}")
-    click.echo(f"Params:     {param_line}")
-
-    if has_start:
-        start_str = datetime.fromtimestamp(timing["start"]).strftime("%Y-%m-%d %H:%M:%S")
-        click.echo(f"Start:      {start_str}")
-
-        if has_end:
-            end_str = datetime.fromtimestamp(timing["end"]).strftime("%Y-%m-%d %H:%M:%S")
-            click.echo(f"End:        {end_str}")
+        # Find the run
+        if sweep_id:
+            result = _find_run(sweep_id, run_hash_str)
+            if not result:
+                click.echo(f"Run {run_hash_str} not found in sweep {sweep_id}.", err=True)
+                any_missing = True
+                continue
+            found_sweep = sweep_id
         else:
-            click.echo(f"End:        \u2014")
+            found_sweep = None
+            result = None
+            for sid in list_sweep_ids():
+                result = _find_run(sid, run_hash_str)
+                if result:
+                    found_sweep = sid
+                    break
+            if not result:
+                click.echo(f"Run {run_hash_str} not found in any sweep.", err=True)
+                any_missing = True
+                continue
 
-        duration = timing.get("duration")
-        if duration is not None:
-            mins, secs = divmod(int(duration), 60)
-            hours, mins = divmod(mins, 60)
-            if hours:
-                dur_str = f"{hours}h {mins}m {secs}s"
-            elif mins:
-                dur_str = f"{mins}m {secs}s"
+        param_line, index = result
+
+        # Gather status info
+        completed = get_completed_hashes(found_sweep)
+        review = get_review_hashes(found_sweep)
+        exit_codes = get_completed_exit_codes(found_sweep)
+        timings = get_run_timings(found_sweep)
+
+        h = run_hash_str
+        if h in completed:
+            ec = exit_codes.get(h)
+            status = "failed" if ec and ec != 0 else "ran"
+        elif h in review:
+            status = "review"
+        else:
+            status = "pending"
+
+        timing = timings.get(h, {})
+        has_start = timing.get("start") is not None
+        has_end = timing.get("end") is not None
+
+        # If pending but has a start time with no end, it's potentially running
+        if status == "pending" and has_start and not has_end:
+            status_display = "running"
+        else:
+            status_display = status
+
+        click.echo(f"Sweep:      {found_sweep}")
+        click.echo(f"Hash:       {h}")
+        click.echo(f"Status:     {status_display}")
+        click.echo(f"Params:     {param_line}")
+
+        if has_start:
+            start_str = datetime.fromtimestamp(timing["start"]).strftime("%Y-%m-%d %H:%M:%S")
+            click.echo(f"Start:      {start_str}")
+
+            if has_end:
+                end_str = datetime.fromtimestamp(timing["end"]).strftime("%Y-%m-%d %H:%M:%S")
+                click.echo(f"End:        {end_str}")
             else:
-                dur_str = f"{secs}s"
-            click.echo(f"Duration:   {dur_str}")
-        else:
-            click.echo(f"Duration:   \u2014")
+                click.echo(f"End:        —")
 
-        ec = exit_codes.get(h)
-        if ec is not None:
-            click.echo(f"Exit code:  {ec}")
-        else:
-            click.echo(f"Exit code:  \u2014")
+            duration = timing.get("duration")
+            if duration is not None:
+                mins, secs = divmod(int(duration), 60)
+                hours, mins = divmod(mins, 60)
+                if hours:
+                    dur_str = f"{hours}h {mins}m {secs}s"
+                elif mins:
+                    dur_str = f"{mins}m {secs}s"
+                else:
+                    dur_str = f"{secs}s"
+                click.echo(f"Duration:   {dur_str}")
+            else:
+                click.echo(f"Duration:   —")
+
+            ec = exit_codes.get(h)
+            if ec is not None:
+                click.echo(f"Exit code:  {ec}")
+            else:
+                click.echo(f"Exit code:  —")
+
+    if any_missing:
+        raise SystemExit(1)
+
+
+@cli.command("kill")
+@click.argument("run_hash_str")
+@click.option("--sweep-id", default=None, help="Sweep ID to search in. If omitted, searches all sweeps.")
+@click.option("--signal", "sig", default="TERM", help="Signal to send: TERM (default) or KILL.")
+def cmd_kill(run_hash_str, sweep_id, sig):
+    """Kill a running experiment by its hash."""
+    import signal as signal_mod
+    sig_map = {"TERM": signal_mod.SIGTERM, "KILL": signal_mod.SIGKILL}
+    sig_num = sig_map.get(sig.upper(), signal_mod.SIGTERM)
+
+    sweep_ids_to_check = [sweep_id] if sweep_id else list_sweep_ids()
+    for sid in sweep_ids_to_check:
+        pid = get_running_pid(sid, run_hash_str)
+        if pid is not None:
+            success = kill_run(sid, run_hash_str, sig_num)
+            if success:
+                click.echo(f"Sent {sig.upper()} to PID {pid} (hash {run_hash_str}, sweep {sid}).")
+            else:
+                click.echo(f"Process PID {pid} not found (may have already exited).", err=True)
+                raise SystemExit(1)
+            return
+
+    click.echo(f"No running process found for hash {run_hash_str}.", err=True)
+    raise SystemExit(1)
+
+
+@cli.command("logs")
+@click.argument("run_hash_str")
+@click.option("--sweep-id", default=None, help="Sweep ID to search in. If omitted, searches all sweeps.")
+@click.option("-n", "--lines", "num_lines", default=50, show_default=True, help="Number of lines to show.")
+@click.option("-f", "--follow", is_flag=True, default=False, help="Follow log output (like tail -f).")
+def cmd_logs(run_hash_str, sweep_id, num_lines, follow):
+    """Show last N lines of a run's log file."""
+    import subprocess as sp
+
+    sweep_ids_to_check = [sweep_id] if sweep_id else list_sweep_ids()
+    for sid in sweep_ids_to_check:
+        try:
+            _, param_lines = get_sweep_config(sid)
+        except FileNotFoundError:
+            continue
+        for line in param_lines:
+            if run_hash(line) == run_hash_str:
+                log_file = _log_path(sid, run_hash_str)
+                if not os.path.exists(log_file):
+                    click.echo(f"No log file found at {log_file}", err=True)
+                    raise SystemExit(1)
+                if follow:
+                    try:
+                        sp.run(["tail", "-f", log_file])
+                    except KeyboardInterrupt:
+                        pass
+                else:
+                    with open(log_file, "r") as f:
+                        all_lines = f.readlines()
+                    for l in all_lines[-num_lines:]:
+                        click.echo(l, nl=False)
+                return
+
+    click.echo(f"Run {run_hash_str} not found.", err=True)
+    raise SystemExit(1)
 
 
 @cli.command("run")

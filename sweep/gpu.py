@@ -10,6 +10,7 @@ import time
 logger = logging.getLogger(__name__)
 
 from sweep.core import (
+    _log_path,
     claim_next_run,
     execute_run,
     get_sweep_config,
@@ -18,6 +19,7 @@ from sweep.core import (
     record_run_end,
     record_run_start,
     run_hash,
+    start_process,
 )
 
 
@@ -94,8 +96,12 @@ def sweep_daemon(sweep_ids: list[str], interval: int = 30, gpu_id: int = 0, cpu_
                 h = run_hash(param_line)
                 logger.info("[daemon] Sweep '%s' [%s] %s", sweep_id, h, param_line)
 
-                record_run_start(sweep_id, h)
-                exit_code = execute_run(command, param_line)
+                log_path = _log_path(sweep_id, h)
+                proc = start_process(command, param_line, log_path=log_path)
+                record_run_start(sweep_id, h, pid=proc.pid)
+                exit_code = proc.wait()
+                if hasattr(proc, "_tee_thread"):
+                    proc._tee_thread.join(timeout=5)
                 record_run_end(sweep_id, h, exit_code)
                 record_exit_code(sweep_id, h, exit_code)
                 if exit_code == 0:

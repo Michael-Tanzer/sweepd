@@ -8,6 +8,7 @@ from sweep.core import (
     get_configs_dir,
     get_ran_dir,
     get_review_dir,
+    get_logs_dir,
     param_line_to_dict,
     run_hash,
     get_sweep_config,
@@ -17,6 +18,9 @@ from sweep.core import (
     unlock_file,
     claim_next_run,
     execute_run,
+    start_process,
+    get_running_pid,
+    kill_run,
     sweep_run,
     get_default_command,
     save_meta,
@@ -36,6 +40,7 @@ from sweep.core import (
     record_exit_code,
     record_run_start,
     record_run_end,
+    record_run_killed,
     get_run_timings,
 )
 from sweep.gpu import is_gpu_free, sweep_daemon
