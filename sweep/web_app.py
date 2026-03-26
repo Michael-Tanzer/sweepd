@@ -104,7 +104,10 @@ def _runs_to_table_rows(param_lines, completed_hashes, review_hashes=None, exit_
         timing = timings.get(h)
         duration = timing["duration"] if timing and timing.get("duration") is not None else None
         if h in completed_hashes:
-            status = "failed" if ec is not None and ec != 0 else "ran"
+            if ec is None and timing and timing.get("start") is not None and timing.get("end") is None:
+                status = "running"
+            else:
+                status = "failed" if ec is not None and ec != 0 else "ran"
         elif h in review_hashes:
             status = "review"
         else:
@@ -143,7 +146,8 @@ def api_sweeps_summary():
         completed_hashes = get_completed_hashes(sid)
         review_hashes = get_review_hashes(sid)
         exit_codes = get_completed_exit_codes(sid)
-        rows, _ = _runs_to_table_rows(param_lines, completed_hashes, review_hashes, exit_codes)
+        timings = get_run_timings(sid)
+        rows, _ = _runs_to_table_rows(param_lines, completed_hashes, review_hashes, exit_codes, timings)
         completed = sum(1 for r in rows if r["status"] in ("ran", "failed"))
         review = sum(1 for r in rows if r["status"] == "review")
         failed = sum(1 for r in rows if r["status"] == "failed")

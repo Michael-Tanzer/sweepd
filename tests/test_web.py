@@ -403,14 +403,17 @@ def test_api_clone_sweep_not_found(client):
 
 
 def test_api_get_sweep_running_status(client, sweep_dir):
-    """GET /api/sweeps/<id> includes 'running' status for runs with start but no end."""
+    """GET /api/sweeps/<id> includes 'running' status for claimed runs with start but no end."""
     import json
     import sweep as mod
     os.makedirs(sweep_dir / "configs", exist_ok=True)
     os.makedirs(sweep_dir / "timing", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
     mod.save_meta("run1", ["python", "x.py"])
     mod.save_runs("run1", ["a=1", "a=2"])
     h1 = mod.run_hash("a=1")
+    # claim_next_run adds to ran file before timing starts
+    (sweep_dir / "ran" / "run1.txt").write_text(f"{h1}\ta=1\n")
     (sweep_dir / "timing" / "run1.jsonl").write_text(
         json.dumps({"hash": h1, "event": "start", "time": 1710000000.0}) + "\n"
     )
@@ -427,9 +430,12 @@ def test_api_sweeps_summary_running_count(client, sweep_dir):
     import sweep as mod
     os.makedirs(sweep_dir / "configs", exist_ok=True)
     os.makedirs(sweep_dir / "timing", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
     mod.save_meta("sumr", ["python", "x.py"])
     mod.save_runs("sumr", ["a=1"])
     h = mod.run_hash("a=1")
+    # claim_next_run adds to ran file before timing starts
+    (sweep_dir / "ran" / "sumr.txt").write_text(f"{h}\ta=1\n")
     (sweep_dir / "timing" / "sumr.jsonl").write_text(
         json.dumps({"hash": h, "event": "start", "time": 1710000000.0}) + "\n"
     )

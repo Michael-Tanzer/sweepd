@@ -526,14 +526,36 @@ def execute_run(command: list[str], param_line: str) -> int:
 
 
 def _tee_output(pipe, log_path: str) -> None:
-    """Read from pipe, write to both stdout and log file."""
+    r"""Read from pipe, tee to terminal (raw) and log file (\\r collapsed).
+
+    Terminal receives raw bytes so ``\r``-based progress bars (tqdm etc.)
+    render correctly.  The log file collapses ``\r``-overwritten segments:
+    only the final state of each line (before ``\n``) is written, keeping
+    the file compact.
+    """
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    line_buf = bytearray()
     with open(log_path, "wb") as lf:
-        for line in iter(pipe.readline, b""):
-            sys.stdout.buffer.write(line)
+        while True:
+            chunk = pipe.read1(8192)
+            if not chunk:
+                # Flush any remaining partial line
+                if line_buf:
+                    lf.write(bytes(line_buf) + b"\n")
+                break
+            # Terminal gets raw output (preserves \r for live progress)
+            sys.stdout.buffer.write(chunk)
             sys.stdout.buffer.flush()
-            lf.write(line)
-            lf.flush()
+            # Log file: \r resets current line, \n commits it
+            for b in chunk:
+                if b == 13:  # \r
+                    line_buf.clear()
+                elif b == 10:  # \n
+                    lf.write(bytes(line_buf) + b"\n")
+                    lf.flush()
+                    line_buf.clear()
+                else:
+                    line_buf.append(b)
     pipe.close()
 
 

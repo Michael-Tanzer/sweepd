@@ -302,14 +302,17 @@ def test_cli_info_failed_run(sweep_dir):
 
 
 def test_cli_info_potentially_running(sweep_dir):
-    """sweep info shows 'running' for a run with start but no end."""
+    """sweep info shows 'running' for a claimed run with start but no end."""
     import json
     import sweep as mod
     os.makedirs(sweep_dir / "configs", exist_ok=True)
     os.makedirs(sweep_dir / "timing", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
     mod.save_meta("inf4", ["python", "x.py"])
     mod.save_runs("inf4", ["a=1"])
     h = mod.run_hash("a=1")
+    # claim_next_run adds to ran file before timing starts
+    (sweep_dir / "ran" / "inf4.txt").write_text(f"{h}\ta=1\n")
     (sweep_dir / "timing" / "inf4.jsonl").write_text(
         json.dumps({"hash": h, "event": "start", "time": 1710000000.0}) + "\n"
     )
@@ -362,14 +365,17 @@ def test_cli_clone_not_found(sweep_dir):
 
 
 def test_cli_show_running_status(sweep_dir):
-    """sweep show displays 'running' for a run with start but no end in timing."""
+    """sweep show displays 'running' for a claimed run with start but no end in timing."""
     import json
     import sweep as mod
     os.makedirs(sweep_dir / "configs", exist_ok=True)
     os.makedirs(sweep_dir / "timing", exist_ok=True)
+    os.makedirs(sweep_dir / "ran", exist_ok=True)
     mod.save_meta("sr1", ["python", "x.py"])
     mod.save_runs("sr1", ["a=1", "a=2"])
     h = mod.run_hash("a=1")
+    # claim_next_run adds to ran file before timing starts
+    (sweep_dir / "ran" / "sr1.txt").write_text(f"{h}\ta=1\n")
     (sweep_dir / "timing" / "sr1.jsonl").write_text(
         json.dumps({"hash": h, "event": "start", "time": 1710000000.0}) + "\n"
     )
@@ -584,8 +590,8 @@ def test_cli_show_mixed_statuses(sweep_dir):
     h1 = mod.run_hash("a=1")
     h2 = mod.run_hash("a=2")
     h3 = mod.run_hash("a=3")
-    # a=1: completed (exit 0)
-    (sweep_dir / "ran" / "mix.txt").write_text(f"{h1}\ta=1\t0\n{h2}\ta=2\t1\n")
+    # a=1: completed (exit 0), a=2: failed (exit 1), a=3: claimed (no exit code yet)
+    (sweep_dir / "ran" / "mix.txt").write_text(f"{h1}\ta=1\t0\n{h2}\ta=2\t1\n{h3}\ta=3\n")
     # a=3: running (start, no end)
     (sweep_dir / "timing" / "mix.jsonl").write_text(
         json.dumps({"hash": h3, "event": "start", "time": 1710000000.0}) + "\n"

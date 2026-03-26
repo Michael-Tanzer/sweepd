@@ -126,7 +126,10 @@ def cmd_show(sweep_id):
         h = run_hash(line)
         if h in completed:
             ec = exit_codes.get(h)
-            if ec is not None and ec != 0:
+            timing = timings.get(h, {})
+            if ec is None and timing.get("start") is not None and timing.get("end") is None:
+                n_running += 1
+            elif ec is not None and ec != 0:
                 n_failed += 1
             else:
                 n_completed += 1
@@ -153,7 +156,10 @@ def cmd_show(sweep_id):
         h = run_hash(line)
         if h in completed:
             ec = exit_codes.get(h)
-            if ec is not None and ec != 0:
+            timing = timings.get(h, {})
+            if ec is None and timing.get("start") is not None and timing.get("end") is None:
+                status = "running"
+            elif ec is not None and ec != 0:
                 status = f"failed (exit {ec})"
             elif ec is not None:
                 status = f"completed (exit {ec})"
@@ -223,23 +229,24 @@ def cmd_info(run_hashes, sweep_id):
         timings = get_run_timings(found_sweep)
 
         h = run_hash_str
-        if h in completed:
-            ec = exit_codes.get(h)
-            status = "failed" if ec and ec != 0 else "ran"
-        elif h in review:
-            status = "review"
-        else:
-            status = "pending"
-
         timing = timings.get(h, {})
         has_start = timing.get("start") is not None
         has_end = timing.get("end") is not None
 
-        # If pending but has a start time with no end, it's potentially running
-        if status == "pending" and has_start and not has_end:
-            status_display = "running"
+        if h in completed:
+            ec = exit_codes.get(h)
+            if ec is None and has_start and not has_end:
+                status = "running"
+            else:
+                status = "failed" if ec and ec != 0 else "ran"
+        elif h in review:
+            status = "review"
+        elif has_start and not has_end:
+            status = "running"
         else:
-            status_display = status
+            status = "pending"
+
+        status_display = status
 
         click.echo(f"Sweep:      {found_sweep}")
         click.echo(f"Hash:       {h}")
